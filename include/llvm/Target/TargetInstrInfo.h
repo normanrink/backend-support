@@ -1024,6 +1024,23 @@ public:
 
 private:
   int CallFrameSetupOpcode, CallFrameDestroyOpcode;
+
+public:
+  virtual unsigned getCompareRegAndStackOpcode(const TargetRegisterClass *RC) const {
+    return ~0;
+  }
+
+  virtual void compareRegAndStackSlot(MachineBasicBlock &MBB,
+                                      MachineBasicBlock::iterator MI,
+                                      unsigned Reg, unsigned StackSlot,
+                                      const MachineRegisterInfo &MRI,
+                                      const TargetRegisterInfo &TRI) const {
+    return;
+  }
+
+  virtual void populateExitBlock(MachineBasicBlock *exit) const {
+    return;
+  }
 };
 
 } // End llvm namespace

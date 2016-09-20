@@ -496,7 +496,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       !usesTheStack(MF) &&                              // Don't push and pop.
       !MF.shouldSplitStack()) {                         // Regular stack
     uint64_t MinSize = X86FI->getCalleeSavedFrameSize();
-    if (HasFP) MinSize += SlotSize;
+    if (HasFP) MinSize += MF.protectFramePtr() ? 2*SlotSize : SlotSize;
     StackSize = std::max(MinSize, StackSize > 128 ? StackSize - 128 : 0);
     MFI->setStackSize(StackSize);
   }
@@ -534,7 +534,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
 
   if (HasFP) {
     // Calculate required stack adjustment.
-    uint64_t FrameSize = StackSize - SlotSize;
+    uint64_t FrameSize = StackSize - (MF.protectFramePtr() ? 2*SlotSize : SlotSize);
     if (RegInfo->needsStackRealignment(MF)) {
       // Callee-saved registers are pushed on stack before the stack
       // is realigned.
@@ -550,6 +550,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     MFI->setOffsetAdjustment(-NumBytes);
 
     // Save EBP/RBP into the appropriate stack slot.
+    if (MF.protectFramePtr()) {
+      BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
+        .addReg(FramePtr)
+        .setMIFlag(MachineInstr::FrameSetup);
+    }
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
       .addReg(FramePtr, RegState::Kill)
       .setMIFlag(MachineInstr::FrameSetup);
@@ -611,6 +616,10 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
     PushedRegs = true;
     unsigned Reg = MBBI->getOperand(0).getReg();
     ++MBBI;
+    if (MF.protectCSRs()) {
+      if (MBBI->getOpcode() == X86::ADD32rr || MBBI->getOpcode() == X86::ADD64rr)
+        ++MBBI;
+    }
 
     if (!HasFP && NeedsDwarfCFI) {
       // Mark callee-saved push instruction.
@@ -886,7 +895,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
 
   if (hasFP(MF)) {
     // Calculate required stack adjustment.
-    uint64_t FrameSize = StackSize - SlotSize;
+    uint64_t FrameSize = StackSize - (MF.protectFramePtr() ? 2*SlotSize : SlotSize);
     if (RegInfo->needsStackRealignment(MF)) {
       // Callee-saved registers were pushed on stack before the stack
       // was realigned.
@@ -897,8 +906,21 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     }
 
     // Pop EBP.
-    BuildMI(MBB, MBBI, DL,
-            TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
+    if (MF.protectFramePtr()) {
+      BuildMI(MBB, MBBI, DL,
+              TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
+      
+      addRegOffset(BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::CMP64rm : X86::CMP32rm)).addReg(FramePtr), 
+                     STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
+      BuildMI(MBB, MBBI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
+      MF.getExitBlock()->addPredecessor(&MBB);
+      
+      BuildMI(MBB, MBBI, DL,
+              TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
+    } else {
+      BuildMI(MBB, MBBI, DL,
+              TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
+    }
   } else {
     NumBytes = StackSize - CSSize;
   }
@@ -907,10 +929,26 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   while (MBBI != MBB.begin()) {
     MachineBasicBlock::iterator PI = std::prev(MBBI);
     unsigned Opc = PI->getOpcode();
-
-    if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
-        !PI->isTerminator())
-      break;
+  
+    if (MF.protectCSRs() || MF.protectFramePtr()) {
+      if (PI->getOpcode() == X86::JNE_1) {
+        MachineBasicBlock::iterator PPI = std::prev(PI);
+        if (PPI->getOpcode() == X86::CMP32rm || PPI->getOpcode() == X86::CMP64rm) {
+          MBBI = PPI;
+          PI = std::prev(MBBI);
+          Opc = PI->getOpcode();
+        }
+      }
+      
+      if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
+          Opc != X86::SUB32rr && Opc != X86::SUB64rr &&
+          !PI->isTerminator())
+        break;
+    } else {
+      if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
+          !PI->isTerminator())
+        break;
+    }
 
     --MBBI;
   }
@@ -1099,7 +1137,7 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
 
   if (hasFP(MF)) {
     // emitPrologue always spills frame register the first thing.
-    SpillSlotOffset -= SlotSize;
+    SpillSlotOffset -= MF.protectFramePtr() ? 2*SlotSize : SlotSize;
     MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
 
     // Since emitPrologue and emitEpilogue will handle spilling and restoring of
@@ -1115,17 +1153,25 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
   }
 
   // Assign slots for GPRs. It increases frame size.
+  bool hasGPR = false;
   for (unsigned i = CSI.size(); i != 0; --i) {
     unsigned Reg = CSI[i - 1].getReg();
 
     if (!X86::GR64RegClass.contains(Reg) && !X86::GR32RegClass.contains(Reg))
       continue;
+    hasGPR = true;
 
     SpillSlotOffset -= SlotSize;
     CalleeSavedFrameSize += SlotSize;
 
     int SlotIndex = MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
     CSI[i - 1].setFrameIdx(SlotIndex);
+  }
+  if (MF.protectCSRs() && hasGPR) {
+     // Reserve a slot for the sum of callee-saved GPRs: 
+    SpillSlotOffset -= SlotSize;
+    CalleeSavedFrameSize += SlotSize;
+    MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
   }
 
   X86FI->setCalleeSavedFrameSize(CalleeSavedFrameSize);
@@ -1161,6 +1207,8 @@ bool X86FrameLowering::spillCalleeSavedRegisters(
   const X86Subtarget &STI = MF.getTarget().getSubtarget<X86Subtarget>();
 
   // Push GPRs. It increases frame size.
+  bool hasGPR = false;
+  unsigned FirstReg = 0;
   unsigned Opc = STI.is64Bit() ? X86::PUSH64r : X86::PUSH32r;
   for (unsigned i = CSI.size(); i != 0; --i) {
     unsigned Reg = CSI[i - 1].getReg();
@@ -1170,7 +1218,21 @@ bool X86FrameLowering::spillCalleeSavedRegisters(
     // Add the callee-saved register as live-in. It's killed at the spill.
     MBB.addLiveIn(Reg);
 
-    BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(Reg, RegState::Kill)
+    if (!hasGPR || !MF.protectCSRs()) {
+      FirstReg = Reg;
+      BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(Reg, RegState::Kill)
+        .setMIFlag(MachineInstr::FrameSetup);
+      hasGPR = true;
+    } else {
+      BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(Reg)
+        .setMIFlag(MachineInstr::FrameSetup);
+      BuildMI(MBB, MI, DL, TII.get(X86::ADD64rr), FirstReg).addReg(FirstReg).addReg(Reg, RegState::Kill)
+        .setMIFlag(MachineInstr::FrameSetup);
+    }
+  }
+  if (MF.protectCSRs() && hasGPR) {
+    assert(FirstReg);
+    BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(FirstReg, RegState::Kill)
       .setMIFlag(MachineInstr::FrameSetup);
   }
 
@@ -1221,13 +1283,51 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
 
   // POP GPRs.
   unsigned Opc = STI.is64Bit() ? X86::POP64r : X86::POP32r;
+  
+  bool hasGPR = false;
+  unsigned LastReg = 0;
+
+  if (MF.protectCSRs()) {
+    for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
+      unsigned Reg = CSI[i].getReg();
+      if (!X86::GR64RegClass.contains(Reg) &&
+          !X86::GR32RegClass.contains(Reg))
+        continue;
+
+      hasGPR = true;
+      LastReg = CSI[i].getReg();
+    }
+    if (hasGPR) {
+      assert(LastReg);
+      BuildMI(MBB, MI, DL, TII.get(Opc), LastReg);
+    }
+  }
+
   for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
     unsigned Reg = CSI[i].getReg();
     if (!X86::GR64RegClass.contains(Reg) &&
         !X86::GR32RegClass.contains(Reg))
       continue;
 
-    BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
+    if (!MF.protectCSRs()) {
+      BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
+    } else {
+      if (Reg != LastReg) {
+        BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
+        BuildMI(MBB, MI, DL, TII.get(X86::SUB64rr), LastReg).addReg(LastReg).addReg(Reg);
+      } else {
+        const TargetRegisterClass *RC = X86::GR64RegClass.contains(LastReg) ? &X86::GR64RegClass
+                                                                            : &X86::GR32RegClass;
+        unsigned CmpOpc = TII.getCompareRegAndStackOpcode(RC);
+
+        addRegOffset(BuildMI(MBB, MI, DL, TII.get(CmpOpc)).addReg(LastReg), 
+                     STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
+        BuildMI(MBB, MI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
+        MF.getExitBlock()->addPredecessor(&MBB);
+
+        BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
+      }
+    }
   }
   return true;
 }

@@ -77,6 +77,13 @@ unsigned VirtRegMap::createSpillSlot(const TargetRegisterClass *RC) {
   int SS = MF->getFrameInfo()->CreateSpillStackObject(RC->getSize(),
                                                       RC->getAlignment());
   ++NumSpillSlots;
+
+  if (MF->protectSpills()) {
+    // Create stack object for shadow register:
+    MF->getFrameInfo()->CreateSpillStackObject(RC->getSize(),
+                                               RC->getAlignment());
+    ++NumSpillSlots;
+  }
   return SS;
 }
 

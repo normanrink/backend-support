@@ -745,6 +745,12 @@ bool InlineSpiller::hoistSpill(LiveInterval &SpillLI, MachineInstr *CopyMI) {
                           MRI.getRegClass(SVI.SpillReg), &TRI);
   --MII; // Point to store instruction.
   LIS.InsertMachineInstrInMaps(MII);
+  if (MBB->getParent()->protectSpills()) {
+    TII.storeRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot+1,
+                            MRI.getRegClass(SVI.SpillReg), &TRI);
+    --MII; // Point to store instruction.
+    LIS.InsertMachineInstrInMaps(MII);
+  }
   DEBUG(dbgs() << "\thoisted: " << SVI.SpillVNI->def << '\t' << *MII);
 
   ++NumSpills;
@@ -800,7 +806,10 @@ void InlineSpiller::eliminateRedundantSpills(LiveInterval &SLI, VNInfo *VNI) {
 
       // Erase spills.
       int FI;
-      if (Reg == TII.isStoreToStackSlot(MI, FI) && FI == StackSlot) {
+      bool RegMatch = (Reg == TII.isStoreToStackSlot(MI, FI));
+      bool FIMatch = MF.protectSpills() ? (FI == StackSlot || FI == StackSlot+1)
+                                        : (FI == StackSlot);
+      if (RegMatch && FIMatch) {
         DEBUG(dbgs() << "Redundant spill " << Idx << '\t' << *MI);
         // eliminateDeadDefs won't normally remove stores, so switch opcode.
         MI->setDesc(TII.get(TargetOpcode::KILL));
@@ -1109,7 +1118,7 @@ foldMemoryOperand(ArrayRef<std::pair<MachineInstr*, unsigned> > Ops,
                        : TII.foldMemoryOperand(MI, FoldOps, StackSlot);
   if (!FoldMI)
     return false;
-
+  
   // Remove LIS for any dead defs in the original MI not in FoldMI.
   for (MIBundleOperands MO(MI); MO.isValid(); ++MO) {
     if (!MO->isReg())
@@ -1192,8 +1201,12 @@ void InlineSpiller::insertSpill(unsigned NewVReg, bool isKill,
   MachineBasicBlock &MBB = *MI->getParent();
 
   MachineInstrSpan MIS(MI);
-  TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot,
+  TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, false, StackSlot,
                           MRI.getRegClass(NewVReg), &TRI);
+  if (MBB.getParent()->protectSpills()) {
+    TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot+1,
+                            MRI.getRegClass(NewVReg), &TRI);
+  }
 
   LIS.InsertMachineInstrRangeInMaps(std::next(MI), MIS.end());
 
@@ -1272,16 +1285,28 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
       }
     }
 
+    MachineBasicBlock *MBB = MI->getParent();
+    MachineFunction *MF = MBB->getParent();
     // Attempt to fold memory ops.
-    if (foldMemoryOperand(Ops))
+    if (!MF->protectSpills() && foldMemoryOperand(Ops))
       continue;
 
     // Create a new virtual register for spill/fill.
     // FIXME: Infer regclass from instruction alone.
     unsigned NewVReg = Edit->createFrom(Reg);
 
-    if (RI.Reads)
-      insertReload(NewVReg, Idx, MI);
+    if (RI.Reads) {
+      if (!MF->protectSpills()) { 
+        insertReload(NewVReg, Idx, MI);
+      } else {
+        MachineInstr *InsertMI = MBB->begin();
+        insertReload(NewVReg, Idx, InsertMI);
+        
+        MachineInstrSpan MIS(InsertMI);
+        TII.compareRegAndStackSlot(*MBB, InsertMI, NewVReg, StackSlot+1, MRI, TRI);
+        LIS.InsertMachineInstrRangeInMaps(MIS.begin(), InsertMI);
+      }
+    }
 
     // Rewrite instruction operands.
     bool hasLiveDef = false;

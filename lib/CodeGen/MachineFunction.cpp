@@ -36,9 +36,24 @@
 #include "llvm/Target/TargetFrameLowering.h"
 #include "llvm/Target/TargetLowering.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetInstrInfo.h"
+#include "llvm/Support/CommandLine.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "codegen"
+
+static cl::opt<bool>
+ProtectSpill("protect-spill",
+             cl::desc("Protect register spills by duplication"));
+static cl::opt<bool>
+ProtectCSR("protect-csr",
+           cl::desc("Protect callee-saved registers by duplicating on the stack"));
+static cl::opt<bool>
+ProtectFPtr("protect-fptr",
+            cl::desc("Protect the frame pointer (if used) by duplicating on the stack"));
+static cl::opt<bool>
+ProtectOnlyEnc("protect-only-enc",
+               cl::desc("Protect functions only when prefixed with '___enc_'"));
 
 //===----------------------------------------------------------------------===//
 // MachineFunction implementation
@@ -80,6 +95,45 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
 
   FunctionNumber = FunctionNum;
   JumpTableInfo = nullptr;
+
+  populateExitBlock();
+}
+
+void MachineFunction::populateExitBlock() {
+  if (!protectSpills() && !protectCSRs() && !protectFramePtr())
+    return;
+
+  ExitBlock = CreateMachineBasicBlock();
+}
+
+void MachineFunction::enqueueExitBlock() {
+  if (!protectSpills() && !protectCSRs() && !protectFramePtr())
+    return;
+
+  BasicBlocks.push_back(ExitBlock);
+  ExitBlock->setNumber(addToMBBNumbering(ExitBlock));
+  Target.getInstrInfo()->populateExitBlock(ExitBlock);
+}
+
+bool MachineFunction::protectSpills() const {
+  bool result = ProtectSpill;
+  if (ProtectOnlyEnc)
+    result = result && getName().startswith("___enc_");
+  return result;
+}
+
+bool MachineFunction::protectCSRs() const {
+  bool result = ProtectCSR;
+  if (ProtectOnlyEnc)
+    result = result && getName().startswith("___enc_");
+  return result;
+}
+
+bool MachineFunction::protectFramePtr() const {
+  bool result = ProtectFPtr;
+  if (ProtectOnlyEnc)
+    result = result && getName().startswith("___enc_");
+  return result;
 }
 
 MachineFunction::~MachineFunction() {

@@ -666,6 +666,7 @@ private:
   // Methods used to maintain doubly linked list of blocks...
   friend struct ilist_traits<MachineBasicBlock>;
 
+public:
   // Machine-CFG mutators
 
   /// addPredecessor - Remove pred as a predecessor of this MachineBasicBlock.

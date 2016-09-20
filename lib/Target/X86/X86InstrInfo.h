@@ -457,6 +457,16 @@ private:
   /// operand and follow operands form a reference to the stack frame.
   bool isFrameOperand(const MachineInstr *MI, unsigned int Op,
                       int &FrameIndex) const;
+public:
+  unsigned getCompareRegAndStackOpcode(const TargetRegisterClass *RC) const;
+
+  void compareRegAndStackSlot(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator MI,
+                              unsigned Reg, unsigned StackSlot,
+                              const MachineRegisterInfo &MRI,
+                              const TargetRegisterInfo &TRI) const;
+
+  void populateExitBlock(MachineBasicBlock *exit) const;
 };
 
 } // End llvm namespace

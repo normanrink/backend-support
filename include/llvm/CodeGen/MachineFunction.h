@@ -136,6 +136,16 @@ class MachineFunction {
 
   MachineFunction(const MachineFunction &) LLVM_DELETED_FUNCTION;
   void operator=(const MachineFunction&) LLVM_DELETED_FUNCTION;
+
+  MachineBasicBlock *ExitBlock;
+  void populateExitBlock();
+public:
+  MachineBasicBlock *getExitBlock() const { return ExitBlock; }
+  void enqueueExitBlock();
+
+  bool protectSpills() const;
+  bool protectCSRs() const;
+  bool protectFramePtr() const;
 public:
   MachineFunction(const Function *Fn, const TargetMachine &TM,
                   unsigned FunctionNum, MachineModuleInfo &MMI,
@@ -326,11 +336,12 @@ public:
   const MachineBasicBlock & back() const { return BasicBlocks.back(); }
         MachineBasicBlock & back()       { return BasicBlocks.back(); }
 
-  void push_back (MachineBasicBlock *MBB) { BasicBlocks.push_back (MBB); }
   void push_front(MachineBasicBlock *MBB) { BasicBlocks.push_front(MBB); }
   void insert(iterator MBBI, MachineBasicBlock *MBB) {
     BasicBlocks.insert(MBBI, MBB);
   }
+  void push_back (MachineBasicBlock *MBB) { BasicBlocks.push_back (MBB); }
+
   void splice(iterator InsertPt, iterator MBBI) {
     BasicBlocks.splice(InsertPt, BasicBlocks, MBBI);
   }

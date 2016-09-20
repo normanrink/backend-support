@@ -3332,6 +3332,39 @@ void X86InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   addFrameReference(BuildMI(MBB, MI, DL, get(Opc), DestReg), FrameIdx);
 }
 
+unsigned X86InstrInfo::getCompareRegAndStackOpcode(const TargetRegisterClass *RC) const {
+  unsigned OpcCmp = ~0;
+  switch(RC->getID()) {
+  case X86::GR8RegClassID: OpcCmp = X86::CMP8rm; break;
+  case X86::GR16RegClassID: OpcCmp = X86::CMP16rm; break;
+  case X86::GR32RegClassID: OpcCmp = X86::CMP32rm; break;
+  case X86::GR64RegClassID: OpcCmp = X86::CMP64rm; break;
+  default:
+    llvm_unreachable("register class not handled");
+  }
+  return OpcCmp;
+}
+  
+void X86InstrInfo::compareRegAndStackSlot(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MI,
+                                          unsigned Reg, unsigned StackSlot,
+                                          const MachineRegisterInfo &MRI,
+                                          const TargetRegisterInfo &TRI) const {
+  MachineFunction *MF = MBB.getParent();
+  DebugLoc DL = MBB.findDebugLoc(MI);
+  
+  unsigned Opc = getCompareRegAndStackOpcode(MRI.getRegClass(Reg));
+  addFrameReference(BuildMI(MBB, MI, DL, get(Opc)).addReg(Reg), StackSlot);
+  BuildMI(MBB, MI, DL, get(X86::JNE_1)).addMBB(MF->getExitBlock());
+
+  MF->getExitBlock()->addPredecessor(&MBB);
+} 
+
+void X86InstrInfo::populateExitBlock(MachineBasicBlock *exit) const {
+  BuildMI(*exit, exit->end(), DebugLoc(), get(X86::MOV32ri), X86::EDI).addImm(3);
+  BuildMI(*exit, exit->end(), DebugLoc(), get(X86::CALL64pcrel32)).addExternalSymbol("exit");
+}
+
 void X86InstrInfo::loadRegFromAddr(MachineFunction &MF, unsigned DestReg,
                                  SmallVectorImpl<MachineOperand> &Addr,
                                  const TargetRegisterClass *RC,
