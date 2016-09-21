@@ -1076,7 +1076,7 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
     assert (hasFP(MF) && "VLAs and dynamic stack realign, but no FP?!");
     if (FI < 0) {
       // Skip the saved EBP.
-      return Offset + RegInfo->getSlotSize();
+      return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
     } else {
       assert((-(Offset + StackSize)) % MFI->getObjectAlignment(FI) == 0);
       return Offset + StackSize;
@@ -1084,7 +1084,7 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
   } else if (RegInfo->needsStackRealignment(MF)) {
     if (FI < 0) {
       // Skip the saved EBP.
-      return Offset + RegInfo->getSlotSize();
+      return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
     } else {
       assert((-(Offset + StackSize)) % MFI->getObjectAlignment(FI) == 0);
       return Offset + StackSize;
@@ -1095,7 +1095,7 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
       return Offset + StackSize;
 
     // Skip the saved EBP.
-    Offset += RegInfo->getSlotSize();
+    Offset += MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize();
 
     // Skip the RETADDR move area
     const X86MachineFunctionInfo *X86FI = MF.getInfo<X86MachineFunctionInfo>();
