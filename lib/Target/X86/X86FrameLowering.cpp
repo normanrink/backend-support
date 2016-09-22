@@ -914,9 +914,11 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
                      STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
       BuildMI(MBB, MBBI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
       MF.getExitBlock()->addPredecessor(&MBB);
-      
-      BuildMI(MBB, MBBI, DL,
-              TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
+      // Another 'pop' to restore EBP would constitute an additional memory access.
+      // This code avoids it: 
+      unsigned Opc = getADDriOpcode(IsLP64, SlotSize); 
+      MachineInstr *mi = BuildMI(MBB, MBBI, DL, TII.get(Opc), StackPtr).addReg(StackPtr).addImm(SlotSize);
+      mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
     } else {
       BuildMI(MBB, MBBI, DL,
               TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
@@ -935,9 +937,12 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
         MachineBasicBlock::iterator PPI = std::prev(PI);
         if (PPI->getOpcode() == X86::CMP32rm || PPI->getOpcode() == X86::CMP64rm) {
           MBBI = PPI;
-          PI = std::prev(MBBI);
-          Opc = PI->getOpcode();
+          continue;
         }
+      }
+      if (PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)) {
+        MBBI = PI;
+        continue;
       }
       
       if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
@@ -1325,7 +1330,17 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
         BuildMI(MBB, MI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
         MF.getExitBlock()->addPredecessor(&MBB);
 
-        BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
+        // Another 'pop' to restore 'Reg' (which is the same as 'LastReg')  would constitute an
+        // additional memory access. This code avoids it: 
+        const X86RegisterInfo *RegInfo =
+          static_cast<const X86RegisterInfo *>(MF.getTarget().getRegisterInfo());
+        unsigned StackPtr = RegInfo->getStackRegister();
+        unsigned SlotSize = RegInfo->getSlotSize();
+        const X86Subtarget &STI = MF.getTarget().getSubtarget<X86Subtarget>();
+        bool IsLP64 = STI.isTarget64BitLP64();
+        unsigned Opc = getADDriOpcode(IsLP64, SlotSize); 
+        MachineInstr *mi = BuildMI(MBB, MI, DL, TII.get(Opc), StackPtr).addReg(StackPtr).addImm(SlotSize);
+        mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
       }
     }
   }
