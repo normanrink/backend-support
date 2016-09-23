@@ -69,15 +69,20 @@ bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
   }
 
   for (MachineFunction::iterator MBB = Func.begin(); MBB != Func.end(); MBB++) {
-    for (MachineBasicBlock::iterator MI = MBB->begin(); MI != MBB->end(); MI++) {
+    MachineBasicBlock::iterator MI = MBB->begin();
+    while(MI != MBB->end()) {
+      MachineBasicBlock::iterator NMI = std::next(MI);
+
       modified |= handleCallInst(*MBB, MI);
   
       if (!Func.getName().equals("main"))
         modified |= handleReturnInst(*MBB, MI);
+
+      MI = NMI;
     }
   }
 
-  return true;
+  return modified;
 }
 
 bool ProtectReturnSupportPass::handleCallInst(MachineBasicBlock &MBB, MachineInstr *MI) {
@@ -114,6 +119,13 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   unsigned PopOpc = STI.is64Bit() ? X86::POP64r : X86::POP32r;
   const TargetRegisterClass *RC = X86::GR64RegClass.contains(Reg) ? &X86::GR64RegClass
                                                                   : &X86::GR32RegClass;
+  
+  if (MI->getOpcode() == X86::TAILJMPd64) {
+    // For tail jumps, the duplicated return address from the stack must be put into the 'r11' register:
+    BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
+    return true;
+  }
+
   BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
   unsigned CmpOpc = TII.getCompareRegAndStackOpcode(RC);
 
@@ -121,7 +133,18 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
                STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
   BuildMI(MBB, MI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
   MF.getExitBlock()->addPredecessor(&MBB);
+  
+  // Replace the return instruction with an increment of the stack pointer, followed by an
+  // indirect jump (in order to avoid another implicit stack access by the return instruction): 
+  unsigned AddOpc = STI.is64Bit() ? X86::ADD64ri8 : X86::ADD32ri8; 
+  MachineInstr *mi = BuildMI(MBB, MI, DL, TII.get(AddOpc), StackPtr)
+                       .addReg(StackPtr).addImm(SlotSize);
+  mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
+
+  unsigned JmpOpc = STI.is64Bit() ? X86::JMP64r : X86::JMP32r;
+  BuildMI(MBB, MI, DL, TII.get(JmpOpc), Reg);
         
+  MI->eraseFromParent();
   return true;
 }
 
