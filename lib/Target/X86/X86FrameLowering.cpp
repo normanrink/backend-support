@@ -1080,6 +1080,8 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
   if (RegInfo->hasBasePointer(MF)) {
     assert (hasFP(MF) && "VLAs and dynamic stack realign, but no FP?!");
     if (FI < 0) {
+      // Skip the additional return pointer on the stack:
+      if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
       // Skip the saved EBP.
       return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
     } else {
@@ -1088,6 +1090,8 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
     }
   } else if (RegInfo->needsStackRealignment(MF)) {
     if (FI < 0) {
+      // Skip the additional return pointer on the stack:
+      if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
       // Skip the saved EBP.
       return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
     } else {
@@ -1099,6 +1103,8 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
     if (!hasFP(MF))
       return Offset + StackSize;
 
+    // Skip the additional return pointer on the stack:
+    if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
     // Skip the saved EBP.
     Offset += MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize();
 
@@ -1139,6 +1145,12 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
 
   unsigned CalleeSavedFrameSize = 0;
   int SpillSlotOffset = getOffsetOfLocalArea() + X86FI->getTCReturnAddrDelta();
+
+  // Assign a slot for the additional return pointer on the stack:
+  if (MF.protectReturnPtr()) {
+    SpillSlotOffset -= SlotSize;
+    MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
+  }
 
   if (hasFP(MF)) {
     // emitPrologue always spills frame register the first thing.

@@ -146,6 +146,7 @@ public:
   bool protectSpills() const;
   bool protectCSRs() const;
   bool protectFramePtr() const;
+  bool protectReturnPtr() const;
 public:
   MachineFunction(const Function *Fn, const TargetMachine &TM,
                   unsigned FunctionNum, MachineModuleInfo &MMI,

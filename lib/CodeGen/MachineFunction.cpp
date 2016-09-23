@@ -54,6 +54,9 @@ ProtectFPtr("protect-fptr",
 static cl::opt<bool>
 ProtectOnlyEnc("protect-only-enc",
                cl::desc("Protect functions only when prefixed with '___enc_'"));
+static cl::opt<bool>
+ProtectReturnPtr("protect-return-ptr",
+                 cl::desc("Protect the return pointer by passing a second copy in a register"));
 
 //===----------------------------------------------------------------------===//
 // MachineFunction implementation
@@ -100,14 +103,16 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
 }
 
 void MachineFunction::populateExitBlock() {
-  if (!protectSpills() && !protectCSRs() && !protectFramePtr())
+  if (!protectSpills() && !protectCSRs() && !protectFramePtr()
+      && ! protectReturnPtr())
     return;
 
   ExitBlock = CreateMachineBasicBlock();
 }
 
 void MachineFunction::enqueueExitBlock() {
-  if (!protectSpills() && !protectCSRs() && !protectFramePtr())
+  if (!protectSpills() && !protectCSRs() && !protectFramePtr()
+      && ! protectReturnPtr())
     return;
 
   BasicBlocks.push_back(ExitBlock);
@@ -135,6 +140,11 @@ bool MachineFunction::protectFramePtr() const {
     result = result && getName().startswith("___enc_");
   return result;
 }
+
+bool MachineFunction::protectReturnPtr() const {
+  return ProtectReturnPtr;
+}
+
 
 MachineFunction::~MachineFunction() {
   // Don't call destructors on MachineInstr and MachineOperand. All of their
