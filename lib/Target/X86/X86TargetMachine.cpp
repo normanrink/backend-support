@@ -149,6 +149,7 @@ bool X86PassConfig::addILPOpts() {
 }
 
 bool X86PassConfig::addPreRegAlloc() {
+  addPass(createX86ProtectJTSupport());
   return false;  // -print-machineinstr shouldn't print after this.
 }
 

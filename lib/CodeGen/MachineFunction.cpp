@@ -57,6 +57,9 @@ ProtectOnlyEnc("protect-only-enc",
 static cl::opt<bool>
 ProtectReturnPtr("protect-return-ptr",
                  cl::desc("Protect the return pointer by passing a second copy in a register"));
+static cl::opt<bool>
+ProtectJT("protect-jt",
+          cl::desc("Protect jump tables"));
 
 //===----------------------------------------------------------------------===//
 // MachineFunction implementation
@@ -104,7 +107,7 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
 
 void MachineFunction::populateExitBlock() {
   if (!protectSpills() && !protectCSRs() && !protectFramePtr()
-      && ! protectReturnPtr())
+      && !protectReturnPtr() && !protectJT())
     return;
 
   ExitBlock = CreateMachineBasicBlock();
@@ -112,7 +115,7 @@ void MachineFunction::populateExitBlock() {
 
 void MachineFunction::enqueueExitBlock() {
   if (!protectSpills() && !protectCSRs() && !protectFramePtr()
-      && ! protectReturnPtr())
+      && ! protectReturnPtr() && !protectJT())
     return;
 
   BasicBlocks.push_back(ExitBlock);
@@ -141,10 +144,19 @@ bool MachineFunction::protectFramePtr() const {
   return result;
 }
 
-bool MachineFunction::protectReturnPtr() const {
-  return ProtectReturnPtr;
+bool MachineFunction::protectJT() const {
+  bool result = ProtectJT;
+  if (ProtectOnlyEnc)
+    result = result && getName().startswith("___enc_");
+  return result;
 }
 
+bool MachineFunction::protectReturnPtr() const {
+  // Protecting the return pointer requires co-operation between
+  // caller and callee. Hence, return pointer protection cannot be
+  // predicated on whether the MachineFunction is to be encoded.
+  return ProtectReturnPtr;
+}
 
 MachineFunction::~MachineFunction() {
   // Don't call destructors on MachineInstr and MachineOperand. All of their
@@ -827,8 +839,12 @@ unsigned MachineJumpTableInfo::getEntryAlignment(const DataLayout &TD) const {
 unsigned MachineJumpTableInfo::createJumpTableIndex(
                                const std::vector<MachineBasicBlock*> &DestBBs) {
   assert(!DestBBs.empty() && "Cannot create an empty jump table!");
+  const MachineFunction *MF = DestBBs[0]->getParent();
   JumpTables.push_back(MachineJumpTableEntry(DestBBs));
-  return JumpTables.size()-1;
+  unsigned index = JumpTables.size()-1;
+  if (MF->protectJT())
+    JumpTables.push_back(MachineJumpTableEntry(DestBBs));
+  return index; 
 }
 
 /// ReplaceMBBInJumpTables - If Old is the target of any jump tables, update
@@ -837,8 +853,12 @@ bool MachineJumpTableInfo::ReplaceMBBInJumpTables(MachineBasicBlock *Old,
                                                   MachineBasicBlock *New) {
   assert(Old != New && "Not making a change?");
   bool MadeChange = false;
-  for (size_t i = 0, e = JumpTables.size(); i != e; ++i)
-    ReplaceMBBInJumpTable(i, Old, New);
+  const MachineFunction *MF = Old->getParent();
+  for (size_t i = 0, e = JumpTables.size(); i != e; ++i) {
+    MadeChange |= ReplaceMBBInJumpTable(i, Old, New);
+    if (MF->protectJT())
+      ReplaceMBBInJumpTable(++i, Old, New);
+  }
   return MadeChange;
 }
 
