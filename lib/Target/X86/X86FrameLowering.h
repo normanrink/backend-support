@@ -67,6 +67,8 @@ public:
   void eliminateCallFramePseudoInstr(MachineFunction &MF,
                                  MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI) const override;
+
+  unsigned getExtraSlotsForProtection(const MachineFunction &MF) const;
 };
 
 } // End llvm namespace

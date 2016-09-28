@@ -496,7 +496,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       !usesTheStack(MF) &&                              // Don't push and pop.
       !MF.shouldSplitStack()) {                         // Regular stack
     uint64_t MinSize = X86FI->getCalleeSavedFrameSize();
-    if (HasFP) MinSize += MF.protectFramePtr() ? 2*SlotSize : SlotSize;
+    if (HasFP) MinSize = SlotSize;
+    MinSize += getExtraSlotsForProtection(MF);
     StackSize = std::max(MinSize, StackSize > 128 ? StackSize - 128 : 0);
     MFI->setStackSize(StackSize);
   }
@@ -534,7 +535,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
 
   if (HasFP) {
     // Calculate required stack adjustment.
-    uint64_t FrameSize = StackSize - (MF.protectFramePtr() ? 2*SlotSize : SlotSize);
+    uint64_t FrameSize = StackSize - SlotSize;
+    FrameSize -= getExtraSlotsForProtection(MF);
     if (RegInfo->needsStackRealignment(MF)) {
       // Callee-saved registers are pushed on stack before the stack
       // is realigned.
@@ -604,6 +606,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       I->addLiveIn(FramePtr);
   } else {
     NumBytes = StackSize - X86FI->getCalleeSavedFrameSize();
+    NumBytes -= getExtraSlotsForProtection(MF);
   }
 
   // Skip the callee-saved push instructions.
@@ -895,7 +898,8 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
 
   if (hasFP(MF)) {
     // Calculate required stack adjustment.
-    uint64_t FrameSize = StackSize - (MF.protectFramePtr() ? 2*SlotSize : SlotSize);
+    uint64_t FrameSize = StackSize - SlotSize;
+    FrameSize -= getExtraSlotsForProtection(MF);
     if (RegInfo->needsStackRealignment(MF)) {
       // Callee-saved registers were pushed on stack before the stack
       // was realigned.
@@ -925,6 +929,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     }
   } else {
     NumBytes = StackSize - CSSize;
+    NumBytes -= getExtraSlotsForProtection(MF);
   }
 
   // Skip the callee-saved pop instructions.
@@ -1069,6 +1074,20 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 }
 
+unsigned X86FrameLowering::getExtraSlotsForProtection(const MachineFunction &MF) const {
+  const X86RegisterInfo *RegInfo =
+    static_cast<const X86RegisterInfo*>(MF.getTarget().getRegisterInfo());
+  
+  unsigned adjustment = 0;
+  // Skip the additional return pointer on the stack:
+  if (MF.protectReturnPtr() && !MF.getName().equals("main"))
+    adjustment += RegInfo->getSlotSize();
+  // Skip the additional copy of EBP/RBP on the stack:
+  if (hasFP(MF) && MF.protectFramePtr()) adjustment += RegInfo->getSlotSize();
+
+  return adjustment;
+}
+
 int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
                                           int FI) const {
   const X86RegisterInfo *RegInfo =
@@ -1080,20 +1099,18 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
   if (RegInfo->hasBasePointer(MF)) {
     assert (hasFP(MF) && "VLAs and dynamic stack realign, but no FP?!");
     if (FI < 0) {
-      // Skip the additional return pointer on the stack:
-      if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
+      Offset += getExtraSlotsForProtection(MF);
       // Skip the saved EBP.
-      return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
+      return Offset + RegInfo->getSlotSize();
     } else {
       assert((-(Offset + StackSize)) % MFI->getObjectAlignment(FI) == 0);
       return Offset + StackSize;
     }
   } else if (RegInfo->needsStackRealignment(MF)) {
     if (FI < 0) {
-      // Skip the additional return pointer on the stack:
-      if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
+      Offset += getExtraSlotsForProtection(MF);
       // Skip the saved EBP.
-      return Offset + (MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize());
+      return Offset + RegInfo->getSlotSize();
     } else {
       assert((-(Offset + StackSize)) % MFI->getObjectAlignment(FI) == 0);
       return Offset + StackSize;
@@ -1102,11 +1119,10 @@ int X86FrameLowering::getFrameIndexOffset(const MachineFunction &MF,
   } else {
     if (!hasFP(MF))
       return Offset + StackSize;
-
-    // Skip the additional return pointer on the stack:
-    if (MF.protectReturnPtr()) Offset += RegInfo->getSlotSize();
+      
+    Offset += getExtraSlotsForProtection(MF);
     // Skip the saved EBP.
-    Offset += MF.protectFramePtr() ? 2*RegInfo->getSlotSize() : RegInfo->getSlotSize();
+    Offset += RegInfo->getSlotSize();
 
     // Skip the RETADDR move area
     const X86MachineFunctionInfo *X86FI = MF.getInfo<X86MachineFunctionInfo>();
@@ -1147,15 +1163,19 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
   int SpillSlotOffset = getOffsetOfLocalArea() + X86FI->getTCReturnAddrDelta();
 
   // Assign a slot for the additional return pointer on the stack:
-  if (MF.protectReturnPtr()) {
+  if (MF.protectReturnPtr() && !MF.getName().equals("main")) {
     SpillSlotOffset -= SlotSize;
     MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
   }
-
+  
   if (hasFP(MF)) {
     // emitPrologue always spills frame register the first thing.
-    SpillSlotOffset -= MF.protectFramePtr() ? 2*SlotSize : SlotSize;
+    SpillSlotOffset -= SlotSize;
     MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
+    if (MF.protectFramePtr()) {
+      SpillSlotOffset -= SlotSize;
+      MFI->CreateFixedSpillStackObject(SlotSize, SpillSlotOffset);
+    }
 
     // Since emitPrologue and emitEpilogue will handle spilling and restoring of
     // the frame register, we can delete it from CSI list and not have to worry

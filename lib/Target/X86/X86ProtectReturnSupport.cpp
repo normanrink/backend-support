@@ -113,8 +113,18 @@ bool ProtectReturnSupportPass::handleCallInst(MachineBasicBlock &MBB, MachineIns
     for (unsigned i = 0; i < MI->getNumOperands(); i++)
       hasGA |= MI->getOperand(i).isGlobal();
 
+    unsigned FirstReg;
+    for (unsigned i = 0; i < MI->getNumOperands(); i++) {
+      if (MI->getOperand(i).isReg() &&
+          MI->getOperand(i).getReg() != X86::NoRegister)
+        FirstReg = MI->getOperand(i).getReg();
+        break;
+    }
+
     if (hasGA)
       CallOpcSize = 7;
+    else if (FirstReg && FirstReg < X86::R8)
+      CallOpcSize = 6;
     else
       CallOpcSize = 3;
 
@@ -150,7 +160,7 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   const TargetRegisterClass *RC = X86::GR64RegClass.contains(Reg) ? &X86::GR64RegClass
                                                                   : &X86::GR32RegClass;
   
-  if (MI->getOpcode() == X86::TAILJMPd64) {
+  if (MI->getOpcode() == X86::TAILJMPd64 || MI->getOpcode() == X86::TAILJMPm64) {
     // For tail jumps, the duplicated return address from the stack must be put into the 'r11' register:
     BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
     return true;
