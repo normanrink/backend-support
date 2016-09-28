@@ -27,6 +27,7 @@
 #include "llvm/Target/TargetInstrInfo.h"
 using namespace llvm;
 
+#define DEBUG_TYPE "protect-return-ptr"
 
 namespace {
 class ProtectReturnSupportPass : public MachineFunctionPass {
@@ -95,8 +96,37 @@ bool ProtectReturnSupportPass::handleCallInst(MachineBasicBlock &MBB, MachineIns
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
   const DebugLoc &DL = MI->getDebugLoc();
 
+  unsigned CallOpcSize = 0;
+  if (MI->getOpcode() == X86::CALL64pcrel32) {
+    CallOpcSize = 5;
+  } else if (MI->getOpcode() == X86::CALL64r) {
+    assert(MI->getOperand(0).isReg());
+    unsigned Reg = MI->getOperand(0).getReg();
+
+    if (Reg >= X86::R8)
+      CallOpcSize = 3;
+    else
+      CallOpcSize = 2;
+
+  } else if (MI->getOpcode() == X86::CALL64m) {
+    bool hasGA = false;
+    for (unsigned i = 0; i < MI->getNumOperands(); i++)
+      hasGA |= MI->getOperand(i).isGlobal();
+
+    if (hasGA)
+      CallOpcSize = 7;
+    else
+      CallOpcSize = 3;
+
+  } else  {
+    DEBUG({dbgs() << "unhandled call opcode\n";
+           MI->dump();
+           dbgs() << "no. operands: " << MI->getNumOperands() << "\n";});
+    llvm_unreachable("unhandled call opcode");
+  }
+
   addRegOffset(BuildMI(MBB, MI, DL, TII.get(X86::LEA64r), X86::R11),
-               X86::RIP, /* isKill */ false, 5);
+               X86::RIP, /* isKill */ false, CallOpcSize);
 
   return true;
 }
