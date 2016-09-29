@@ -162,6 +162,17 @@ bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
    */
 
   MachineBasicBlock *NewMBB = MF.CreateMachineBasicBlock(MBB->getBasicBlock());
+  // Add 'NewBB' to the function 'MF' (and assign a number to 'NewMBB'):
+  MF.push_back(NewMBB);
+  NewMBB->setNumber(MF.addToMBBNumbering(NewMBB));
+  // Move 'NewMBB' to immediately after 'MBB' since control must fall through
+  // from 'MBB' to 'NewMBB':
+  NewMBB->moveAfter(MBB);
+  // Hook up successors and predecessors properly:
+  NewMBB->transferSuccessors(MBB);
+  // This also takes care of the predecessors of 'NewMBB'.
+  MBB->addSuccessor(NewMBB);
+
   // Transfer instructions to the new basic block 'NewBB':
   MachineBasicBlock::iterator MBBI = MI;
   ++MBBI;
@@ -174,16 +185,6 @@ bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
 
     MBBI = NextMBBI;
   }
-  // Add 'NewBB' to the function 'MF' (and assign a number to 'NewMBB'):
-  MF.push_back(NewMBB);
-  NewMBB->setNumber(MF.addToMBBNumbering(NewMBB));
-  // Move 'NewMBB' to immediately after 'MBB' since control must fall through
-  // from 'MBB' to 'NewMBB':
-  NewMBB->moveAfter(MBB);
-  // Hook up successors and predecessors properly:
-  NewMBB->transferSuccessors(MBB);
-  // This also takes care of the predecessors of 'NewMBB'.
-  MBB->addSuccessor(NewMBB);
   
   // HACK: This ensures that the 'AsmPrinter' emits the label at the start
   // of the new basic block 'NewMBB':
