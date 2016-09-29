@@ -40,11 +40,19 @@ public:
 
   bool runOnMachineFunction(MachineFunction &Func) override;
 
-  bool handleCallInst(MachineBasicBlock &MM, MachineInstr *MI);
+  bool handleCallInst(MachineInstr *MI);
   bool handleReturnInst(MachineBasicBlock &MM, MachineInstr *MI);
 };
 
 char ProtectReturnSupportPass::ID = 0;
+}
+
+static bool isReturnBlock(const MachineBasicBlock *MBB) {
+  for (auto MI = MBB->begin(), ME = MBB->end(); MI != ME; MI++)
+    if (MI->isReturn())
+      return true;
+
+  return false;
 }
 
 bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
@@ -54,6 +62,8 @@ bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
   bool modified = false;
   
   if (!Func.getName().equals("main")) {
+    // Store the contents of register 'r11' (i.e. the return address) onto
+    // the stack immediately after entering the function 'Func':
     const TargetInstrInfo &TII = *Func.getTarget().getInstrInfo();
     const X86Subtarget &STI = Func.getTarget().getSubtarget<X86Subtarget>();
 
@@ -67,76 +77,123 @@ bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
     BuildMI(*MBB, MI, DL, TII.get(PushOpc)).addReg(Reg, RegState::Kill);
  
     modified = true;
-  }
-
-  for (MachineFunction::iterator MBB = Func.begin(); MBB != Func.end(); MBB++) {
-    MachineBasicBlock::iterator MI = MBB->begin();
-    while(MI != MBB->end()) {
-      MachineBasicBlock::iterator NMI = std::next(MI);
-
-      modified |= handleCallInst(*MBB, MI);
-  
-      if (!Func.getName().equals("main"))
-        modified |= handleReturnInst(*MBB, MI);
-
-      MI = NMI;
+ 
+    // Introduce a check of the return address immediately before return
+    // instructions: 
+    for (auto MBBI = Func.begin(), MBBE = Func.end(); MBBI != MBBE; MBBI++) {
+      if (!isReturnBlock(MBBI))
+        continue;
+      
+      modified |= handleReturnInst(*MBBI, MBBI->getFirstTerminator());
     }
   }
+
+ 
+  SmallVector<MachineInstr*, 16> worklist;
+
+  for (auto MBBI = Func.begin(), MBBE = Func.end(); MBBI != MBBE; MBBI++) {
+    for (auto MI = MBBI->begin(), ME = MBBI->end(); MI != ME; MI++)
+      if (MI->isCall()) worklist.push_back(MI);
+  }
+  while (!worklist.empty()) {
+    MachineInstr *mi = worklist.pop_back_val();
+    modified |= handleCallInst(mi);
+  }
+  
 
   return modified;
 }
 
-bool ProtectReturnSupportPass::handleCallInst(MachineBasicBlock &MBB, MachineInstr *MI) {
-  if (!MI->isCall())
+bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
+  if (!MI->isCall() || MI->isReturn())
     return false;
       
-  MachineFunction &MF = *MBB.getParent();
+  MachineBasicBlock *MBB = MI->getParent();
+  MachineFunction &MF = *MBB->getParent();
+  const DebugLoc &DL = MI->getDebugLoc();
+
   const X86RegisterInfo *RegInfo =
       static_cast<const X86RegisterInfo *>(MF.getTarget().getRegisterInfo());
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
-  const DebugLoc &DL = MI->getDebugLoc();
+  const X86Subtarget &STI = MF.getTarget().getSubtarget<X86Subtarget>();
 
-  unsigned CallOpcSize = 0;
-  if (MI->getOpcode() == X86::CALL64pcrel32) {
-    CallOpcSize = 5;
-  } else if (MI->getOpcode() == X86::CALL64r) {
-    assert(MI->getOperand(0).isReg());
-    unsigned Reg = MI->getOperand(0).getReg();
+  /* On X86 the size of the opcode for the call instruction is not known until
+   * object code is emitted. (The size of the opcoded depends, e.g., on what
+   * arguments the call instruction receives.)
+   * If the size of the opcode could be deduced from the return value of
+   * 'MI->getOpcode()', one caould make do with a sequence of if/else
+   * statements like this:
 
-    if (Reg >= X86::R8)
-      CallOpcSize = 3;
-    else
-      CallOpcSize = 2;
+      unsigned CallOpcSize = 0;
+      
+      if (MI->getOpcode() == X86::CALL64pcrel32) {
+        CallOpcSize = 5;
+      } else if (MI->getOpcode() == X86::CALL64r) {
+        ...
+      } else  {
+      DEBUG({dbgs() << "unhandled call opcode\n";
+             MI->dump();
+             dbgs() << "no. operands: " << MI->getNumOperands() << "\n";});
+      llvm_unreachable("unhandled call opcode");
+      }
+      
+   * The determined size of the opcode could then be used to determine the
+   * return address like so:
 
-  } else if (MI->getOpcode() == X86::CALL64m) {
-    bool hasGA = false;
-    for (unsigned i = 0; i < MI->getNumOperands(); i++)
-      hasGA |= MI->getOperand(i).isGlobal();
+      addRegOffset(BuildMI(MBB, MI, DL, TII.get(X86::LEA64r), X86::R11),
+                   X86::RIP, false, CallOpcSize);
 
-    unsigned FirstReg;
-    for (unsigned i = 0; i < MI->getNumOperands(); i++) {
-      if (MI->getOperand(i).isReg() &&
-          MI->getOperand(i).getReg() != X86::NoRegister)
-        FirstReg = MI->getOperand(i).getReg();
-        break;
-    }
+   * Unfortunately, since it is not possible to use a simple sequence of
+   * if/else statements to deduce the opcode size, we have to introduce a
+   * label immediately after the call instruction. The address of the label is
+   * then equal to the return address, which is put on the stack by the call
+   * instruction. The value of the label, i.e. the return address, is then
+   * placed in the 'r11' register.
+   *
+   * Introducing the new label is involved since it requires that a new basic
+   * block is introduced. Instructions must then be transferred to the new
+   * basic block, and successors and predecessors must be set up correctly.
+   * 
+   * The basic block 'MBB' is split up after the call instruction 'MI'.
+   * The label of the new basic block 'NewMBB' thus ends up at the correct
+   * address, i.e. immediately after the call. The call instruction must then
+   * return to the beginning of 'NewMBB', which means that control must fall
+   * through from 'MBB' to 'NewMBB'.
+   */
 
-    if (hasGA)
-      CallOpcSize = 7;
-    else if (FirstReg && FirstReg < X86::R8)
-      CallOpcSize = 6;
-    else
-      CallOpcSize = 3;
+  MachineBasicBlock *NewMBB = MF.CreateMachineBasicBlock(MBB->getBasicBlock());
+  // Transfer instructions to the new basic block 'NewBB':
+  MachineBasicBlock::iterator MBBI = MI;
+  ++MBBI;
+  while (MBBI != MBB->end()) {
+    MachineInstr *mi = MBBI;
+    MachineBasicBlock::iterator NextMBBI = std::next(MBBI);
 
-  } else  {
-    DEBUG({dbgs() << "unhandled call opcode\n";
-           MI->dump();
-           dbgs() << "no. operands: " << MI->getNumOperands() << "\n";});
-    llvm_unreachable("unhandled call opcode");
+    MBB->remove(mi);
+    NewMBB->insert(NewMBB->end(), mi);
+
+    MBBI = NextMBBI;
   }
-
-  addRegOffset(BuildMI(MBB, MI, DL, TII.get(X86::LEA64r), X86::R11),
-               X86::RIP, /* isKill */ false, CallOpcSize);
+  // Add 'NewBB' to the function 'MF' (and assign a number to 'NewMBB'):
+  MF.push_back(NewMBB);
+  NewMBB->setNumber(MF.addToMBBNumbering(NewMBB));
+  // Move 'NewMBB' to immediately after 'MBB' since control must fall through
+  // from 'MBB' to 'NewMBB':
+  NewMBB->moveAfter(MBB);
+  // Hook up successors and predecessors properly:
+  NewMBB->transferSuccessors(MBB);
+  // This also takes care of the predecessors of 'NewMBB'.
+  MBB->addSuccessor(NewMBB);
+  
+  // HACK: This ensures that the 'AsmPrinter' emits the label at the start
+  // of the new basic block 'NewMBB':
+  NewMBB->setIsLandingPad();
+  
+  // Move the address of the start of 'NewBB' to register 'r11' immediately
+  // before the call instruction 'MI':
+  unsigned Reg = STI.is64Bit() ? X86::R11 : X86::EDX;
+  unsigned MovOpc = STI.is64Bit() ? X86::MOV64ri : X86::MOV32ri;
+  BuildMI(*MBB, MI, DL, TII.get(MovOpc), Reg).addMBB(NewMBB);
 
   return true;
 }
@@ -160,11 +217,17 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   const TargetRegisterClass *RC = X86::GR64RegClass.contains(Reg) ? &X86::GR64RegClass
                                                                   : &X86::GR32RegClass;
   
-  if (MI->getOpcode() == X86::TAILJMPd64 || MI->getOpcode() == X86::TAILJMPm64) {
-    // For tail jumps, the duplicated return address from the stack must be put into the 'r11' register:
+  if (MI->getOpcode() == X86::TAILJMPd64 || MI->getOpcode() == X86::TAILJMPm64 ||
+      MI->getOpcode() == X86::TAILJMPr64) {
+    // TODO: Figure out if one can test for tail jumps by "isReturn() && isCall()"
+    // of "isReturn() && isBranch()" or similar combination.
+
+    // For tail jumps, the duplicated return address from the stack must be put into
+    // the 'r11' register:
     BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
     return true;
   }
+  DEBUG(MI->dump()); // Only "true" return instructions should reach this point.
 
   BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
   unsigned CmpOpc = TII.getCompareRegAndStackOpcode(RC);
@@ -180,7 +243,7 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   MachineInstr *mi = BuildMI(MBB, MI, DL, TII.get(AddOpc), StackPtr)
                        .addReg(StackPtr).addImm(SlotSize);
   mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
-
+  
   unsigned JmpOpc = STI.is64Bit() ? X86::JMP64r : X86::JMP32r;
   BuildMI(MBB, MI, DL, TII.get(JmpOpc), Reg);
         
@@ -189,3 +252,4 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
 }
 
 FunctionPass *llvm::createX86ProtectReturnSupport() { return new ProtectReturnSupportPass; }
+
