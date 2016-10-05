@@ -1026,7 +1026,18 @@ private:
   int CallFrameSetupOpcode, CallFrameDestroyOpcode;
 
 public:
-  virtual unsigned getCompareRegAndStackOpcode(const TargetRegisterClass *RC) const {
+  virtual bool protectRegisterSpill(unsigned Reg,
+                                    const MachineFunction *MF) const {
+    return MF->protectSpills();
+  }
+  
+  virtual MachineInstr* findReloadPosition(MachineInstr *MI) const {
+    return MI;
+  }
+
+  virtual unsigned getCompareRegAndStackOpcode(unsigned Reg,
+                                               const MachineRegisterInfo &MRI,
+                                               const TargetRegisterInfo &TRI) const {
     return ~0;
   }
 

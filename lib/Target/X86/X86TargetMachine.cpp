@@ -176,6 +176,7 @@ bool X86PassConfig::addPreEmitPass() {
     ShouldPrint = true;
   }
 
+  addPass(createX86ProtectSpillSupport());
   addPass(createX86ProtectReturnSupport());
   addPass(createX86EnqueueExits());
   return ShouldPrint;

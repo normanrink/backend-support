@@ -121,6 +121,10 @@ void MachineFunction::enqueueExitBlock() {
   BasicBlocks.push_back(ExitBlock);
   ExitBlock->setNumber(addToMBBNumbering(ExitBlock));
   Target.getInstrInfo()->populateExitBlock(ExitBlock);
+
+  // HACK: This ensures that the 'AsmPrinter' emits the label at
+  // the start of the 'ExitBlock':
+  ExitBlock->setIsLandingPad();
 }
 
 bool MachineFunction::protectSpills() const {

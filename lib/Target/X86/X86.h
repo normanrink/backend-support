@@ -81,6 +81,8 @@ FunctionPass *createX86ProtectJTSupport();
 
 FunctionPass *createX86ProtectReturnSupport();
 
+FunctionPass *createX86ProtectSpillSupport();
+
 FunctionPass *createX86EnqueueExits();
 
 } // End llvm namespace

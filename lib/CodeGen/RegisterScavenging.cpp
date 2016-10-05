@@ -225,7 +225,7 @@ void RegScavenger::forward() {
           }
         if (!SubUsed) {
           MBB->getParent()->verify(nullptr, "In Register Scavenger");
-          llvm_unreachable("Using an undefined register!");
+          //llvm_unreachable("Using an undefined register!");
         }
         (void)SubUsed;
       }
@@ -414,20 +414,40 @@ unsigned RegScavenger::scavengeRegister(const TargetRegisterClass *RC,
     // Spill the scavenged register before I.
     assert(Scavenged[SI].FrameIndex >= 0 &&
            "Cannot scavenge register without an emergency spill slot!");
-    TII->storeRegToStackSlot(*MBB, I, SReg, true, Scavenged[SI].FrameIndex,
+    
+    bool duplicate = TII->protectRegisterSpill(SReg, MBB->getParent());
+    
+    TII->storeRegToStackSlot(*MBB, I, SReg, !duplicate, Scavenged[SI].FrameIndex,
                              RC, TRI);
     MachineBasicBlock::iterator II = std::prev(I);
 
     unsigned FIOperandNum = getFrameIndexOperandNum(II);
     TRI->eliminateFrameIndex(II, SPAdj, FIOperandNum, this);
 
+    if (duplicate) {
+      TII->storeRegToStackSlot(*MBB, I, SReg, true, Scavenged[SI].FrameIndex+1,
+                               RC, TRI);
+    
+      MachineBasicBlock::iterator II = std::prev(I);
+
+      unsigned FIOperandNum = getFrameIndexOperandNum(II);
+      TRI->eliminateFrameIndex(II, SPAdj, FIOperandNum, this);
+    }
+
     // Restore the scavenged register before its use (or first terminator).
-    TII->loadRegFromStackSlot(*MBB, UseMI, SReg, Scavenged[SI].FrameIndex,
+    MachineInstr *InsertMI = UseMI;
+    if (duplicate) InsertMI = TII->findReloadPosition(UseMI);
+
+    TII->loadRegFromStackSlot(*MBB, InsertMI, SReg, Scavenged[SI].FrameIndex,
                               RC, TRI);
-    II = std::prev(UseMI);
+    II = std::prev(InsertMI);
 
     FIOperandNum = getFrameIndexOperandNum(II);
     TRI->eliminateFrameIndex(II, SPAdj, FIOperandNum, this);
+
+    if (duplicate) 
+      TII->compareRegAndStackSlot(*MBB, InsertMI, SReg, Scavenged[SI].FrameIndex+1,
+                                  *MRI, *TRI);
   }
 
   Scavenged[SI].Restore = std::prev(UseMI);

@@ -500,10 +500,23 @@ TargetInstrInfo::foldMemoryOperand(MachineBasicBlock::iterator MI,
   MachineBasicBlock::iterator Pos = MI;
   const TargetRegisterInfo *TRI = MF.getTarget().getRegisterInfo();
 
-  if (Flags == MachineMemOperand::MOStore)
-    storeRegToStackSlot(*MBB, Pos, MO.getReg(), MO.isKill(), FI, RC, TRI);
-  else
-    loadRegFromStackSlot(*MBB, Pos, MO.getReg(), FI, RC, TRI);
+  bool duplicate = protectRegisterSpill(MO.getReg(), MBB->getParent());
+ 
+  if (Flags == MachineMemOperand::MOStore) {
+    bool earlyKill = MO.isKill() && !duplicate;
+    storeRegToStackSlot(*MBB, Pos, MO.getReg(), earlyKill, FI, RC, TRI);
+
+    if (duplicate)
+      storeRegToStackSlot(*MBB, Pos, MO.getReg(), MO.isKill(), FI+1, RC, TRI);
+  } else {
+    MachineInstr *InsertMI = Pos;
+    if (duplicate) InsertMI = findReloadPosition(Pos);
+
+    loadRegFromStackSlot(*MBB, InsertMI, MO.getReg(), FI, RC, TRI);
+    if (duplicate) compareRegAndStackSlot(*MBB, InsertMI, MO.getReg(), FI+1,
+                                          MBB->getParent()->getRegInfo(), *TRI);
+    Pos = InsertMI;
+  }
   return --Pos;
 }
 

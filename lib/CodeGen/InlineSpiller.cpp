@@ -745,7 +745,7 @@ bool InlineSpiller::hoistSpill(LiveInterval &SpillLI, MachineInstr *CopyMI) {
                           MRI.getRegClass(SVI.SpillReg), &TRI);
   --MII; // Point to store instruction.
   LIS.InsertMachineInstrInMaps(MII);
-  if (MBB->getParent()->protectSpills()) {
+  if (TII.protectRegisterSpill(SVI.SpillReg, MBB->getParent())) {
     TII.storeRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot+1,
                             MRI.getRegClass(SVI.SpillReg), &TRI);
     --MII; // Point to store instruction.
@@ -807,8 +807,9 @@ void InlineSpiller::eliminateRedundantSpills(LiveInterval &SLI, VNInfo *VNI) {
       // Erase spills.
       int FI;
       bool RegMatch = (Reg == TII.isStoreToStackSlot(MI, FI));
-      bool FIMatch = MF.protectSpills() ? (FI == StackSlot || FI == StackSlot+1)
-                                        : (FI == StackSlot);
+      bool FIMatch = TII.protectRegisterSpill(Reg, &MF)
+                       ? (FI == StackSlot || FI == StackSlot+1)
+                       : (FI == StackSlot);
       if (RegMatch && FIMatch) {
         DEBUG(dbgs() << "Redundant spill " << Idx << '\t' << *MI);
         // eliminateDeadDefs won't normally remove stores, so switch opcode.
@@ -1200,10 +1201,13 @@ void InlineSpiller::insertSpill(unsigned NewVReg, bool isKill,
                                  MachineBasicBlock::iterator MI) {
   MachineBasicBlock &MBB = *MI->getParent();
 
+  bool duplicate = TII.protectRegisterSpill(NewVReg, MBB.getParent());
+  bool earlyKill = isKill && !duplicate;
+
   MachineInstrSpan MIS(MI);
-  TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, false, StackSlot,
+  TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, earlyKill, StackSlot,
                           MRI.getRegClass(NewVReg), &TRI);
-  if (MBB.getParent()->protectSpills()) {
+  if (duplicate) {
     TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot+1,
                             MRI.getRegClass(NewVReg), &TRI);
   }
@@ -1288,7 +1292,8 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
     MachineBasicBlock *MBB = MI->getParent();
     MachineFunction *MF = MBB->getParent();
     // Attempt to fold memory ops.
-    if (!MF->protectSpills() && foldMemoryOperand(Ops))
+    if (!TII.protectRegisterSpill(Reg, MF)
+        && foldMemoryOperand(Ops))
       continue;
 
     // Create a new virtual register for spill/fill.
@@ -1296,10 +1301,10 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
     unsigned NewVReg = Edit->createFrom(Reg);
 
     if (RI.Reads) {
-      if (!MF->protectSpills()) { 
+      if (!TII.protectRegisterSpill(NewVReg, MF)) { 
         insertReload(NewVReg, Idx, MI);
       } else {
-        MachineInstr *InsertMI = MBB->begin();
+        MachineInstr *InsertMI = TII.findReloadPosition(MI);
         insertReload(NewVReg, Idx, InsertMI);
         
         MachineInstrSpan MIS(InsertMI);

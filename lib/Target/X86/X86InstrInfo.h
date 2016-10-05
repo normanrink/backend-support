@@ -458,15 +458,24 @@ private:
   bool isFrameOperand(const MachineInstr *MI, unsigned int Op,
                       int &FrameIndex) const;
 public:
-  unsigned getCompareRegAndStackOpcode(const TargetRegisterClass *RC) const;
+  bool protectRegisterSpill(unsigned Reg,
+                            const MachineFunction *MF) const override;
+
+  MachineInstr* findReloadPosition(MachineInstr *MI) const override;
+
+  unsigned getCompareRegAndStackOpcode(unsigned Reg,
+                                       const MachineRegisterInfo &MRI,
+                                       const TargetRegisterInfo &TRI) const override;
 
   void compareRegAndStackSlot(MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator MI,
                               unsigned Reg, unsigned StackSlot,
                               const MachineRegisterInfo &MRI,
-                              const TargetRegisterInfo &TRI) const;
+                              const TargetRegisterInfo &TRI) const override;
 
-  void populateExitBlock(MachineBasicBlock *exit) const;
+  void populateExitBlock(MachineBasicBlock *exit) const override;
+
+  static bool isRegLiveAtMI(unsigned Reg, MachineInstr *MI);
 };
 
 } // End llvm namespace

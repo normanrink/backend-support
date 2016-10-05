@@ -1244,6 +1244,13 @@ let isCompare = 1 in {
 defm CMP : ArithBinOp_F<0x38, 0x3A, 0x3C, "cmp", MRM7r, MRM7m, X86cmp, 0, 0>;
 }
 
+let mayLoad = 1, hasSideEffects = 1 in {
+    def CJE8rm  : PseudoI<(outs), (ins GR8:$src1, i8mem:$src0), []>;
+    def CJE16rm : PseudoI<(outs), (ins GR16:$src1, i16mem:$src0), []>;
+    def CJE32rm : PseudoI<(outs), (ins GR32:$src1, i32mem:$src0), []>;
+    def CJE64rm : PseudoI<(outs), (ins GR64:$src1, i64mem:$src0), []>;
+}
+
 
 //===----------------------------------------------------------------------===//
 // Semantically, test instructions are similar like AND, except they don't

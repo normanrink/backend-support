@@ -353,8 +353,13 @@ void PEI::insertCSRSpillsAndRestores(MachineFunction &Fn) {
       // Insert the spill to the stack frame.
       unsigned Reg = CSI[i].getReg();
       const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
-      TII.storeRegToStackSlot(*EntryBlock, I, Reg, true, CSI[i].getFrameIdx(),
+      bool duplicate = TII.protectRegisterSpill(Reg, &Fn);
+      TII.storeRegToStackSlot(*EntryBlock, I, Reg, !duplicate, CSI[i].getFrameIdx(),
                               RC, TRI);
+      if (duplicate) {
+        TII.storeRegToStackSlot(*EntryBlock, I, Reg, true, CSI[i].getFrameIdx()+1,
+                                RC, TRI);
+      }
     }
   }
 
@@ -367,7 +372,8 @@ void PEI::insertCSRSpillsAndRestores(MachineFunction &Fn) {
     // Skip over all terminator instructions, which are part of the return
     // sequence.
     MachineBasicBlock::iterator I2 = I;
-    while (I2 != MBB->begin() && (--I2)->isTerminator())
+    while (I2 != MBB->begin() && (--I2)->isTerminator()
+           && !I2->getFlag(MachineInstr::ExitJump))
       I = I2;
 
     bool AtStart = I == MBB->begin();

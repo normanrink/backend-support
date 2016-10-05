@@ -112,8 +112,6 @@ bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
   MachineFunction &MF = *MBB->getParent();
   const DebugLoc &DL = MI->getDebugLoc();
 
-  const X86RegisterInfo *RegInfo =
-      static_cast<const X86RegisterInfo *>(MF.getTarget().getRegisterInfo());
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
   const X86Subtarget &STI = MF.getTarget().getSubtarget<X86Subtarget>();
 
@@ -215,8 +213,6 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
 
   unsigned Reg = STI.is64Bit() ? X86::R11 : X86::EDX;
   unsigned PopOpc = STI.is64Bit() ? X86::POP64r : X86::POP32r;
-  const TargetRegisterClass *RC = X86::GR64RegClass.contains(Reg) ? &X86::GR64RegClass
-                                                                  : &X86::GR32RegClass;
   
   if (MI->getOpcode() == X86::TAILJMPd64 || MI->getOpcode() == X86::TAILJMPm64 ||
       MI->getOpcode() == X86::TAILJMPr64) {
@@ -231,7 +227,23 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   DEBUG(MI->dump()); // Only "true" return instructions should reach this point.
 
   BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
-  unsigned CmpOpc = TII.getCompareRegAndStackOpcode(RC);
+  unsigned CmpOpc = TII.getCompareRegAndStackOpcode(Reg, MF.getRegInfo(), *RegInfo);
+  switch (CmpOpc) {
+  case X86::CJE64rm:
+    CmpOpc = X86::CMP64rm;
+    break;
+  case X86::CJE32rm:
+    CmpOpc = X86::CMP32rm;
+    break;
+  case X86::CJE16rm:
+    CmpOpc = X86::CMP16rm;
+    break;
+  case X86::CJE8rm:
+    CmpOpc = X86::CMP8rm;
+    break;
+  default:
+    llvm_unreachable("invalid opcode for 'CJE' instruction");
+  }
 
   addRegOffset(BuildMI(MBB, MI, DL, TII.get(CmpOpc)).addReg(Reg), 
                STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);

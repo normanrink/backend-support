@@ -36,6 +36,7 @@ set(sources
   X86FixupLEAs.cpp
   X86ProtectJTSupport.cpp
   X86ProtectReturnSupport.cpp
+  X86ProtectSpillSupport.cpp
   X86EnqueueExits.cpp
   )
 

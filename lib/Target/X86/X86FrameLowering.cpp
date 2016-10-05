@@ -950,13 +950,17 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
         continue;
       }
       
+      bool NonExitJumpTerminator = PI->isTerminator() && 
+                                   !PI->getFlag(MachineInstr::ExitJump);
       if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
           Opc != X86::SUB32rr && Opc != X86::SUB64rr &&
-          !PI->isTerminator())
+          !NonExitJumpTerminator)
         break;
     } else {
+      bool NonExitJumpTerminator = PI->isTerminator() && 
+                                   !PI->getFlag(MachineInstr::ExitJump);
       if (Opc != X86::POP32r && Opc != X86::POP64r && Opc != X86::DBG_VALUE &&
-          !PI->isTerminator())
+          !NonExitJumpTerminator)
         break;
     }
 
@@ -1353,9 +1357,25 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
         BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
         BuildMI(MBB, MI, DL, TII.get(X86::SUB64rr), LastReg).addReg(LastReg).addReg(Reg);
       } else {
-        const TargetRegisterClass *RC = X86::GR64RegClass.contains(LastReg) ? &X86::GR64RegClass
-                                                                            : &X86::GR32RegClass;
-        unsigned CmpOpc = TII.getCompareRegAndStackOpcode(RC);
+        unsigned CmpOpc = TII.getCompareRegAndStackOpcode(LastReg,
+                                                          MBB.getParent()->getRegInfo(),
+                                                          *TRI);
+        switch (CmpOpc) {
+        case X86::CJE64rm:
+          CmpOpc = X86::CMP64rm;
+          break;
+        case X86::CJE32rm:
+          CmpOpc = X86::CMP32rm;
+          break;
+        case X86::CJE16rm:
+          CmpOpc = X86::CMP16rm;
+          break;
+        case X86::CJE8rm:
+          CmpOpc = X86::CMP8rm;
+          break;
+        default:
+          llvm_unreachable("invalid opcode for 'CJE' instruction");
+        }
 
         addRegOffset(BuildMI(MBB, MI, DL, TII.get(CmpOpc)).addReg(LastReg), 
                      STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
