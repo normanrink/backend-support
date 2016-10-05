@@ -225,7 +225,7 @@ void RegScavenger::forward() {
           }
         if (!SubUsed) {
           MBB->getParent()->verify(nullptr, "In Register Scavenger");
-          //llvm_unreachable("Using an undefined register!");
+          llvm_unreachable("Using an undefined register!");
         }
         (void)SubUsed;
       }
