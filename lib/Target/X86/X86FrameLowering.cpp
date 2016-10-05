@@ -614,15 +614,14 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
   int StackOffset = 2 * stackGrowth;
 
   while (MBBI != MBB.end() &&
-         (MBBI->getOpcode() == X86::PUSH32r ||
-          MBBI->getOpcode() == X86::PUSH64r)) {
+         ((MBBI->getOpcode() == X86::PUSH32r ||
+           MBBI->getOpcode() == X86::PUSH64r) 
+          || (MF.protectCSRs() &&
+             (MBBI->getOpcode() == X86::ADD32rr ||
+              MBBI->getOpcode() == X86::ADD64rr)) )) {
     PushedRegs = true;
     unsigned Reg = MBBI->getOperand(0).getReg();
     ++MBBI;
-    if (MF.protectCSRs()) {
-      if (MBBI->getOpcode() == X86::ADD32rr || MBBI->getOpcode() == X86::ADD64rr)
-        ++MBBI;
-    }
 
     if (!HasFP && NeedsDwarfCFI) {
       // Mark callee-saved push instruction.
@@ -914,14 +913,18 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
       BuildMI(MBB, MBBI, DL,
               TII.get(Is64Bit ? X86::POP64r : X86::POP32r), FramePtr);
       
-      addRegOffset(BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::CMP64rm : X86::CMP32rm)).addReg(FramePtr), 
-                     STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
-      BuildMI(MBB, MBBI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
-      MF.getExitBlock()->addPredecessor(&MBB);
+      unsigned OpcCJE = X86InstrInfo::getFSOpcode(
+                          TII.getCompareRegAndStackOpcode(FramePtr,
+                                                          MF.getRegInfo(),
+                                                          *RegInfo));
+      addRegOffset(BuildMI(MBB, MBBI, DL, TII.get(OpcCJE)).addReg(FramePtr),
+                           STI.is64Bit() ? X86::RSP : X86::ESP, false, 0);
+
       // Another 'pop' to restore EBP would constitute an additional memory access.
       // This code avoids it: 
       unsigned Opc = getADDriOpcode(IsLP64, SlotSize); 
-      MachineInstr *mi = BuildMI(MBB, MBBI, DL, TII.get(Opc), StackPtr).addReg(StackPtr).addImm(SlotSize);
+      MachineInstr *mi = BuildMI(MBB, MBBI, DL, TII.get(Opc), StackPtr)
+                           .addReg(StackPtr).addImm(SlotSize);
       mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
     } else {
       BuildMI(MBB, MBBI, DL,
@@ -938,14 +941,12 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     unsigned Opc = PI->getOpcode();
   
     if (MF.protectCSRs() || MF.protectFramePtr()) {
-      if (PI->getOpcode() == X86::JNE_1) {
-        MachineBasicBlock::iterator PPI = std::prev(PI);
-        if (PPI->getOpcode() == X86::CMP32rm || PPI->getOpcode() == X86::CMP64rm) {
-          MBBI = PPI;
-          continue;
-        }
-      }
-      if (PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)) {
+      unsigned OpcCJE = X86InstrInfo::getFSOpcode(
+                          TII.getCompareRegAndStackOpcode(FramePtr,
+                                                          MF.getRegInfo(),
+                                                          *RegInfo));
+      if (PI->getOpcode() == OpcCJE || 
+          PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)) {
         MBBI = PI;
         continue;
       }
@@ -1259,9 +1260,12 @@ bool X86FrameLowering::spillCalleeSavedRegisters(
     // Add the callee-saved register as live-in. It's killed at the spill.
     MBB.addLiveIn(Reg);
 
-    if (!hasGPR || !MF.protectCSRs()) {
-      FirstReg = Reg;
+    if (!MF.protectCSRs()) {
       BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(Reg, RegState::Kill)
+        .setMIFlag(MachineInstr::FrameSetup);
+    } else if (!hasGPR) {
+      FirstReg = Reg;
+      BuildMI(MBB, MI, DL, TII.get(Opc)).addReg(Reg)
         .setMIFlag(MachineInstr::FrameSetup);
       hasGPR = true;
     } else {
@@ -1357,30 +1361,13 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
         BuildMI(MBB, MI, DL, TII.get(Opc), Reg);
         BuildMI(MBB, MI, DL, TII.get(X86::SUB64rr), LastReg).addReg(LastReg).addReg(Reg);
       } else {
-        unsigned CmpOpc = TII.getCompareRegAndStackOpcode(LastReg,
-                                                          MBB.getParent()->getRegInfo(),
-                                                          *TRI);
-        switch (CmpOpc) {
-        case X86::CJE64rm:
-          CmpOpc = X86::CMP64rm;
-          break;
-        case X86::CJE32rm:
-          CmpOpc = X86::CMP32rm;
-          break;
-        case X86::CJE16rm:
-          CmpOpc = X86::CMP16rm;
-          break;
-        case X86::CJE8rm:
-          CmpOpc = X86::CMP8rm;
-          break;
-        default:
-          llvm_unreachable("invalid opcode for 'CJE' instruction");
-        }
-
-        addRegOffset(BuildMI(MBB, MI, DL, TII.get(CmpOpc)).addReg(LastReg), 
-                     STI.is64Bit() ? X86::RSP : X86::ESP, /* isKill */ false, 0);
-        BuildMI(MBB, MI, DL, TII.get(X86::JNE_1)).addMBB(MF.getExitBlock());
-        MF.getExitBlock()->addPredecessor(&MBB);
+        const MachineRegisterInfo &MRI = MBB.getParent()->getRegInfo();
+        unsigned OpcCJE = X86InstrInfo::getFSOpcode(
+                            TII.getCompareRegAndStackOpcode(LastReg,
+                                                            MRI,
+                                                            *TRI));
+        addRegOffset(BuildMI(MBB, MI, DL, TII.get(OpcCJE)).addReg(LastReg), 
+                     STI.is64Bit() ? X86::RSP : X86::ESP, false, 0);
 
         // Another 'pop' to restore 'Reg' (which is the same as 'LastReg')  would constitute an
         // additional memory access. This code avoids it: 

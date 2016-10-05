@@ -1244,11 +1244,26 @@ let isCompare = 1 in {
 defm CMP : ArithBinOp_F<0x38, 0x3A, 0x3C, "cmp", MRM7r, MRM7m, X86cmp, 0, 0>;
 }
 
-let mayLoad = 1, hasSideEffects = 1 in {
-    def CJE8rm  : PseudoI<(outs), (ins GR8:$src1, i8mem:$src0), []>;
-    def CJE16rm : PseudoI<(outs), (ins GR16:$src1, i16mem:$src0), []>;
-    def CJE32rm : PseudoI<(outs), (ins GR32:$src1, i32mem:$src0), []>;
-    def CJE64rm : PseudoI<(outs), (ins GR64:$src1, i64mem:$src0), []>;
+let isCodeGenOnly = 1, mayLoad = 1, hasSideEffects = 1 in {
+    def CJE8rm  : X86Inst<0, Pseudo, NoImm, (outs), (ins GR8:$src0, i8mem:$src1),
+                          "CompareExitJumpb $src0, $src1", NoItinerary>;
+    def CJE16rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR16:$src0, i16mem:$src1),
+                          "CompareExitJumpw $src0, $src1", NoItinerary>;
+    def CJE32rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR32:$src0, i32mem:$src1),
+                          "CompareExitJumpd $src0, $src1", NoItinerary>;
+    def CJE64rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR64:$src0, i64mem:$src1),
+                          "CompareExitJumpq $src0, $src1", NoItinerary>;
+    // The prefix 'FS' stands for "frame setup". These instructions are to be
+    // used for checking duplicates of (i) return address, (ii) frame pointer,
+    // and (iii) callee-saved registers.
+    def FS_CJE8rm  : X86Inst<0, Pseudo, NoImm, (outs), (ins GR8:$src0, i8mem:$src1),
+                             "FS_CompareExitJumpb $src0, $src1", NoItinerary>;
+    def FS_CJE16rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR16:$src0, i16mem:$src1),
+                             "FS_CompareExitJumpw $src0, $src1", NoItinerary>;
+    def FS_CJE32rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR32:$src0, i32mem:$src1),
+                             "FS_CompareExitJumpd $src0, $src1", NoItinerary>;
+    def FS_CJE64rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR64:$src0, i64mem:$src1),
+                             "FS_CompareExitJumpq $src0, $src1", NoItinerary>;
 }
 
 

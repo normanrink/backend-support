@@ -88,19 +88,32 @@ bool ProtectSpillSupportPass::runOnMachineFunction(MachineFunction &Func) {
       auto NI = std::next(MI);
       
       unsigned OpcCmp = ~0U;
+      bool isFS = false;
       switch (MI->getOpcode()) {
+      case X86::FS_CJE64rm:
+        isFS = true;
       case X86::CJE64rm:
-          OpcCmp = X86::CMP64rm;
-          break;
+        OpcCmp = X86::CMP64rm;
+        break;
+
+      case X86::FS_CJE32rm:
+        isFS = true;
       case X86::CJE32rm:
-          OpcCmp = X86::CMP32rm;
-          break;
+        OpcCmp = X86::CMP32rm;
+        break;
+
+      case X86::FS_CJE16rm:
+        isFS = true;
       case X86::CJE16rm:
-          OpcCmp = X86::CMP16rm;
-          break;
+        OpcCmp = X86::CMP16rm;
+        break;
+
+      case X86::FS_CJE8rm:
+        isFS = true;
       case X86::CJE8rm:
-          OpcCmp = X86::CMP8rm;
-          break;
+        OpcCmp = X86::CMP8rm;
+        break;
+
       default:
           break;
       }
@@ -115,7 +128,7 @@ bool ProtectSpillSupportPass::runOnMachineFunction(MachineFunction &Func) {
         bool liveRAX = isRAXLiveAtMI(MI);
 
         MachineBasicBlock::iterator JumpI = MI;
-        if (liveFlags) {
+        if (!isFS && liveFlags) {
           MachineBasicBlock::iterator LAHF =
             BuildMI(*MBB, MI, DL, TII->get(X86::LAHF));
           MachineBasicBlock::iterator SAHF = 

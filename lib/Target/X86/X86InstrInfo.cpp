@@ -3393,6 +3393,17 @@ MachineInstr* X86InstrInfo::findReloadPosition(MachineInstr *MI) const {
   return MI;
 }
 
+unsigned X86InstrInfo::getFSOpcode(unsigned OpcCJE) {
+  switch (OpcCJE) {
+  case X86::CJE64rm: return X86::FS_CJE64rm;
+  case X86::CJE32rm: return X86::FS_CJE32rm;
+  case X86::CJE16rm: return X86::FS_CJE16rm;
+  case X86::CJE8rm:  return X86::FS_CJE8rm;
+  default: break;
+  }
+  return ~0U;
+}
+
 unsigned X86InstrInfo::getCompareRegAndStackOpcode(unsigned Reg,
                                                    const MachineRegisterInfo &MRI,
                                                    const TargetRegisterInfo &TRI) const {

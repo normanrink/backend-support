@@ -475,6 +475,7 @@ public:
 
   void populateExitBlock(MachineBasicBlock *exit) const override;
 
+  static unsigned getFSOpcode(unsigned);
   static bool isRegLiveAtMI(unsigned Reg, MachineInstr *MI);
 };
 
