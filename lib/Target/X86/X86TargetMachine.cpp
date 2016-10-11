@@ -176,8 +176,12 @@ bool X86PassConfig::addPreEmitPass() {
     ShouldPrint = true;
   }
 
-  addPass(createX86ProtectSpillSupport());
+  // This pass has to come first since it relies on
+  // the 'getFirsTerminator' method:
   addPass(createX86ProtectReturnSupport());
+  // This pass introduces the 'JNE_1' instruction,
+  // which is an additional terminator:
+  addPass(createX86ProtectSpillSupport());
   addPass(createX86EnqueueExits());
   return ShouldPrint;
 }

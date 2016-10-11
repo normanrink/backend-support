@@ -66,7 +66,8 @@ public:
                                         // function frame setup code.
     BundledPred  = 1 << 1,              // Instruction has bundled predecessors.
     BundledSucc  = 1 << 2,              // Instruction has bundled successors.
-    ExitJump     = 1 << 3
+    ExitJump     = 1 << 3,
+    Spill        = 1 << 4
   };
 private:
   const MCInstrDesc *MCID;              // Instruction descriptor.

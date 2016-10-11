@@ -3296,6 +3296,15 @@ void X86InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     .addReg(SrcReg, getKillRegState(isKill));
 }
 
+void X86InstrInfo::spillRegToStackSlot(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MI,
+                                       unsigned SrcReg, bool isKill, int FrameIdx,
+                                       const TargetRegisterClass *RC,
+                                       const TargetRegisterInfo *TRI) const {
+  storeRegToStackSlot(MBB, MI, SrcReg, isKill, FrameIdx, RC, TRI);
+  (--MI)->setFlag(MachineInstr::Spill);
+}
+
 void X86InstrInfo::storeRegToAddr(MachineFunction &MF, unsigned SrcReg,
                                   bool isKill,
                                   SmallVectorImpl<MachineOperand> &Addr,
@@ -3365,6 +3374,8 @@ bool X86InstrInfo::isRegLiveAtMI(unsigned Reg, MachineInstr *MI) {
       }
     } while (MBBI != MBB->begin());
   }
+  //if (!PrevDef) // convervatively assume live-in:
+  //  return true;
   if (!PrevDef && !MBB->isLiveIn(Reg)) {
     // There is no definition of 'Reg' in this basic block
     // and 'Reg' is not "live in". 
@@ -3373,8 +3384,8 @@ bool X86InstrInfo::isRegLiveAtMI(unsigned Reg, MachineInstr *MI) {
 
   // Now search forward to the last use of 'PrevDef':
   bool isLiveAtMI = false;
-
-  ++MBBI;
+  // TODO: The following increment should be taken out!!
+  //++MBBI;
   while (MBBI != MBB->end()) {
     if (MBBI == OrigMBBI) {
       isLiveAtMI = true;
@@ -3431,15 +3442,16 @@ void X86InstrInfo::compareRegAndStackSlot(MachineBasicBlock &MBB,
                                           unsigned Reg, unsigned StackSlot,
                                           const MachineRegisterInfo &MRI,
                                           const TargetRegisterInfo &TRI) const {
-  MachineFunction *MF = MBB.getParent();
   DebugLoc DL = MBB.findDebugLoc(MI);
   
   unsigned Opc = getCompareRegAndStackOpcode(Reg, MRI, TRI);
-  addFrameReference(BuildMI(MBB, MI, DL, get(Opc)).addReg(Reg), StackSlot);
+  addFrameReference(BuildMI(MBB, MI, DL, get(Opc), Reg).addReg(Reg), StackSlot);
 } 
 
 void X86InstrInfo::populateExitBlock(MachineBasicBlock *exit) const {
   BuildMI(*exit, exit->end(), DebugLoc(), get(X86::MOV32ri), X86::EDI).addImm(3);
+  if (!Subtarget.is64Bit())
+    BuildMI(*exit, exit->end(), DebugLoc(), get(X86::PUSH32r)).addReg(X86::EDI);
   BuildMI(*exit, exit->end(), DebugLoc(), get(X86::CALL64pcrel32)).addExternalSymbol("exit");
 }
 

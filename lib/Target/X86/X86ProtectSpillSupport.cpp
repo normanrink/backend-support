@@ -18,7 +18,6 @@
 #include "X86InstrBuilder.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LiveVariables.h"
-//#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -35,8 +34,6 @@ class ProtectSpillSupportPass : public MachineFunctionPass {
   static char ID;
 
   const char *getPassName() const override { return "X86 Support for protection of register spills"; }
-
-  typedef std::pair<MachineInstr*, MachineInstr*> LSPair;
 
 public:
   ProtectSpillSupportPass() : MachineFunctionPass(ID) {}
@@ -87,83 +84,95 @@ bool ProtectSpillSupportPass::runOnMachineFunction(MachineFunction &Func) {
     while (MI != ME) {
       auto NI = std::next(MI);
       
-      unsigned OpcCmp = ~0U;
-      bool isFS = false;
-      switch (MI->getOpcode()) {
-      case X86::FS_CJE64rm:
-        isFS = true;
-      case X86::CJE64rm:
-        OpcCmp = X86::CMP64rm;
-        break;
+      const DebugLoc &DL = MI->getDebugLoc();
+      MachineBasicBlock *MBB = MI->getParent();
+      MachineFunction *MF = MBB->getParent();
+      const TargetInstrInfo *TII = MF->getTarget().getInstrInfo();
 
-      case X86::FS_CJE32rm:
-        isFS = true;
-      case X86::CJE32rm:
-        OpcCmp = X86::CMP32rm;
-        break;
-
-      case X86::FS_CJE16rm:
-        isFS = true;
-      case X86::CJE16rm:
-        OpcCmp = X86::CMP16rm;
-        break;
-
-      case X86::FS_CJE8rm:
-        isFS = true;
-      case X86::CJE8rm:
-        OpcCmp = X86::CMP8rm;
-        break;
-
-      default:
+      // TODO: Move the following block to a member function.
+      {
+        unsigned OpcCmp = ~0U;
+        bool isFrameSetup = false;
+        switch (MI->getOpcode()) {
+        case X86::FS_CJE64rm:
+          isFrameSetup = true;
+        case X86::CJE64rm:
+          OpcCmp = X86::CMP64rm;
           break;
-      }
 
-      if (OpcCmp != ~0U) {
-        const DebugLoc &DL = MI->getDebugLoc();
-          MachineBasicBlock *MBB = MI->getParent();
-        MachineFunction *MF = MBB->getParent();
-        const TargetInstrInfo *TII = MF->getTarget().getInstrInfo();
+        case X86::FS_CJE32rm:
+          isFrameSetup = true;
+        case X86::CJE32rm:
+          OpcCmp = X86::CMP32rm;
+          break;
 
-        bool liveFlags = X86InstrInfo::isRegLiveAtMI(X86::EFLAGS, MI);
-        bool liveRAX = isRAXLiveAtMI(MI);
-
-        MachineBasicBlock::iterator JumpI = MI;
-        if (!isFS && liveFlags) {
-          MachineBasicBlock::iterator LAHF =
-            BuildMI(*MBB, MI, DL, TII->get(X86::LAHF));
-          MachineBasicBlock::iterator SAHF = 
-            BuildMI(*MBB, std::next(MI), DL, TII->get(X86::SAHF));
-
-          JumpI = SAHF;
-          if (liveRAX) {
-            insertDoubleXchange(LAHF);
-            JumpI = insertDoubleXchange(SAHF);
-          }
-        }
-
-        MachineInstr *CmpI = BuildMI(*MBB, MI, DL, TII->get(OpcCmp));
-        // Transfer all operands of the CJE instruction: (Note that operands
-        // were added to CJE using the 'addFrameReference' function. Therefore,
-        // the exact number and types of operands are not known.)
-        for (unsigned i = 0; i < MI->getNumOperands(); i++) {
-          CmpI->addOperand(MI->getOperand(i));
-        }
+        case X86::FS_CJE16rm:
+          isFrameSetup = true;
+        case X86::CJE16rm:
+          OpcCmp = X86::CMP16rm;
+          break;
   
-        MachineInstr *JumpMI = BuildMI(*MBB, JumpI, DL, TII->get(X86::JNE_1))
-                                .addMBB(MF->getExitBlock());
-        // The EFLAGS are not needed in subsequent instructions.
-        // Hence, kill EFLAGS:
-        JumpMI->getOperand(1).setIsKill(true);
-        // Set the 'ExitJump' flag so that the jump is not mistaken as a
-        // "conventional" terminator: (Not mistaking it for a terminator
-        // is important for the isnertion of function epilogs.)
-        JumpMI->setFlag(MachineInstr::ExitJump);
-        // Add the basic block 'MBB' to the predecessors of the current
-        // machine function's 'ExitBlock':
-        MF->getExitBlock()->addPredecessor(MBB);
+        case X86::FS_CJE8rm:
+          isFrameSetup = true;
+        case X86::CJE8rm:
+          OpcCmp = X86::CMP8rm;
+          break;
+
+        case X86::CJEf64rm:
+          OpcCmp = X86::FCOM64m;
+          break;
+        case X86::CJEf32rm:
+          OpcCmp = X86::FCOM32m;
+          break;
+
+        default:
+          break;
+        }
+
+        if (OpcCmp != ~0U) {
+          bool liveFlags = X86InstrInfo::isRegLiveAtMI(X86::EFLAGS, MI);
+          bool liveRAX = isRAXLiveAtMI(MI);
+
+          MachineBasicBlock::iterator JumpI = MI;
+          //if (!isFrameSetup && liveFlags) {
+          if (!isFrameSetup) {
+            MachineBasicBlock::iterator LAHF =
+              BuildMI(*MBB, MI, DL, TII->get(X86::LAHF));
+            MachineBasicBlock::iterator SAHF =
+              BuildMI(*MBB, std::next(MI), DL, TII->get(X86::SAHF));
+
+            JumpI = SAHF;
+            //if (liveRAX) {
+              insertDoubleXchange(LAHF);
+              JumpI = insertDoubleXchange(SAHF);
+            //}
+          }
+
+          MachineInstr *CmpI = BuildMI(*MBB, MI, DL, TII->get(OpcCmp));
+          // Transfer all operands of the CJE instruction: (Note that operands
+          // were added to CJE using the 'addFrameReference' function. Therefore,
+          // the exact number and types of operands are not known.)
+          unsigned StartIndex = isFrameSetup ? 0 : 1;
+          for (unsigned i = StartIndex; i < MI->getNumOperands(); i++) {
+            CmpI->addOperand(MI->getOperand(i));
+          }
+  
+          MachineInstr *JumpMI = BuildMI(*MBB, JumpI, DL, TII->get(X86::JNE_1))
+                                  .addMBB(MF->getExitBlock());
+          // The EFLAGS are not needed in subsequent instructions.
+          // Hence, kill EFLAGS:
+          JumpMI->getOperand(1).setIsKill(true);
+          // Set the 'ExitJump' flag so that the jump is not mistaken as a
+          // "conventional" terminator: (Not mistaking it for a terminator
+          // is important for the isnertion of function epilogs.)
+          JumpMI->setFlag(MachineInstr::ExitJump);
+          // Add the basic block 'MBB' to the predecessors of the current
+          // machine function's 'ExitBlock':
+          MF->getExitBlock()->addPredecessor(MBB);
       
-        MI->eraseFromParent();
-        modified = true;
+          MI->eraseFromParent();
+          modified = true;
+        }
       }
 
       MI =  NI;

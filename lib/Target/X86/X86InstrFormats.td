@@ -318,6 +318,11 @@ class PseudoI<dag oops, dag iops, list<dag> pattern>
   let Pattern = pattern;
 }
 
+class PseudoAsmI<dag oops, dag iops, string asm, list<dag> pattern>
+  : X86Inst<0, Pseudo, NoImm, oops, iops, asm, NoItinerary> {
+  let Pattern = pattern;
+}
+
 class I<bits<8> o, Format f, dag outs, dag ins, string asm,
         list<dag> pattern, InstrItinClass itin = NoItinerary,
         Domain d = GenericDomain>

@@ -395,7 +395,11 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     }
   }
 
-  if (MF.protectSpills()) {
+  if (MF.protectSpills() ||
+      (MF.protectArgs() && !MF.getName().equals("main")
+       && !MF.getFunction()->isVarArg()) ||
+      MF.protectJT() ||
+      MF.protectReturnPtr()) {
     Reserved.set(X86::BL);
     Reserved.set(X86::BH);
     Reserved.set(X86::BX);

@@ -945,10 +945,29 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
                           TII.getCompareRegAndStackOpcode(FramePtr,
                                                           MF.getRegInfo(),
                                                           *RegInfo));
-      if (PI->getOpcode() == OpcCJE || 
-          PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)) {
-        MBBI = PI;
-        continue;
+      /*
+       * The following test has been commented out since it is not
+       * entirely accurate: it allows for opcodes 'ADD' and 'CJE'
+       * being skipped individually.
+       *
+       * The improved test below checks for a sequence of 'CJE' and
+       * 'ADD', as it is inserted for checks of the callee-saved
+       * registers and the frame pointer. The sequence appears to be
+       * checked in reverse order since we are iterating through
+       * 'MBB' backwards.
+       */
+      //if (PI->getOpcode() == OpcCJE ||
+      //    PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)) {
+      //  MBBI = PI;
+      //  continue;
+      // }
+      /*
+       *  This is the improved test:
+       */
+      if (PI->getOpcode() == getADDriOpcode(IsLP64, SlotSize)
+          && (PI != MBB.begin() && std::prev(PI)->getOpcode() == OpcCJE)) {
+         MBBI = std::prev(PI);
+         continue;
       }
       
       bool NonExitJumpTerminator = PI->isTerminator() && 

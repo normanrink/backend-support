@@ -503,11 +503,10 @@ TargetInstrInfo::foldMemoryOperand(MachineBasicBlock::iterator MI,
   bool duplicate = protectRegisterSpill(MO.getReg(), MBB->getParent());
  
   if (Flags == MachineMemOperand::MOStore) {
-    bool earlyKill = MO.isKill() && !duplicate;
-    storeRegToStackSlot(*MBB, Pos, MO.getReg(), earlyKill, FI, RC, TRI);
-
     if (duplicate)
-      storeRegToStackSlot(*MBB, Pos, MO.getReg(), MO.isKill(), FI+1, RC, TRI);
+      spillRegToStackSlot(*MBB, Pos, MO.getReg(), MO.isKill(), FI, RC, TRI);
+    else
+      storeRegToStackSlot(*MBB, Pos, MO.getReg(), MO.isKill(), FI, RC, TRI);
   } else {
     MachineInstr *InsertMI = Pos;
     if (duplicate) InsertMI = findReloadPosition(Pos);

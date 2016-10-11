@@ -345,6 +345,11 @@ void PEI::insertCSRSpillsAndRestores(MachineFunction &Fn) {
   // Spill using target interface.
   I = EntryBlock->begin();
   if (!TFI->spillCalleeSavedRegisters(*EntryBlock, I, CSI, TRI)) {
+    // For the protection mechanisms we should be using the
+    // target-specific method for spilling callee-saved registers:
+    assert(0 && "should use target-specific method for spilling "
+                "callee-saved registers");
+
     for (unsigned i = 0, e = CSI.size(); i != e; ++i) {
       // Add the callee-saved register as live-in.
       // It's killed at the spill.
@@ -353,13 +358,8 @@ void PEI::insertCSRSpillsAndRestores(MachineFunction &Fn) {
       // Insert the spill to the stack frame.
       unsigned Reg = CSI[i].getReg();
       const TargetRegisterClass *RC = TRI->getMinimalPhysRegClass(Reg);
-      bool duplicate = TII.protectRegisterSpill(Reg, &Fn);
-      TII.storeRegToStackSlot(*EntryBlock, I, Reg, !duplicate, CSI[i].getFrameIdx(),
+      TII.storeRegToStackSlot(*EntryBlock, I, Reg, true, CSI[i].getFrameIdx(),
                               RC, TRI);
-      if (duplicate) {
-        TII.storeRegToStackSlot(*EntryBlock, I, Reg, true, CSI[i].getFrameIdx()+1,
-                                RC, TRI);
-      }
     }
   }
 

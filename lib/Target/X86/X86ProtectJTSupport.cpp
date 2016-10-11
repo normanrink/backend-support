@@ -102,6 +102,7 @@ bool ProtectJTSupportPass::handleInst(MachineBasicBlock &MBB, MachineInstr *MI) 
   const TargetRegisterClass *RC = STI.is64Bit() ? &X86::GR64RegClass
                                                 : &X86::GR32RegClass;
   unsigned VReg = MF.getRegInfo().createVirtualRegister(RC);
+  unsigned VReg1 = MF.getRegInfo().createVirtualRegister(RC);
   
   unsigned LoadOpc = STI.is64Bit() ? X86::MOV64rm : X86::MOV32rm;
   unsigned CmpOpc = STI.is64Bit() ? X86::CJE64rm : X86::CJE32rm;
@@ -111,13 +112,13 @@ bool ProtectJTSupportPass::handleInst(MachineBasicBlock &MBB, MachineInstr *MI) 
      .addJumpTableIndex(JTI3.getIndex()).addReg(Reg4.getReg());
   MIB->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
   
-  MIB = BuildMI(MBB, MI, DL, TII.get(CmpOpc)).addReg(VReg);
+  MIB = BuildMI(MBB, MI, DL, TII.get(CmpOpc), VReg1).addReg(VReg);
   MIB.addReg(Reg0.getReg()).addImm(Imm1.getImm()).addReg(Reg2.getReg())
      .addJumpTableIndex(JTI3.getIndex()+1).addReg(Reg4.getReg());
   MIB->setMemRefs(MI->memoperands_begin(), MI->memoperands_end());
   
   unsigned JmpOpc = STI.is64Bit() ? X86::JMP64r : X86::JMP32r;
-  BuildMI(MBB, MI, DL, TII.get(JmpOpc)).addReg(VReg, RegState::Kill);
+  BuildMI(MBB, MI, DL, TII.get(JmpOpc)).addReg(VReg1, RegState::Kill);
         
   MI->eraseFromParent();
   return true;

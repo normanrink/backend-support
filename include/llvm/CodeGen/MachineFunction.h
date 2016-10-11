@@ -148,6 +148,8 @@ public:
   bool protectFramePtr() const;
   bool protectReturnPtr() const;
   bool protectJT() const;
+  bool protectArgs() const;
+
 public:
   MachineFunction(const Function *Fn, const TargetMachine &TM,
                   unsigned FunctionNum, MachineModuleInfo &MMI,

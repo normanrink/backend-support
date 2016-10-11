@@ -1245,25 +1245,38 @@ defm CMP : ArithBinOp_F<0x38, 0x3A, 0x3C, "cmp", MRM7r, MRM7m, X86cmp, 0, 0>;
 }
 
 let isCodeGenOnly = 1, mayLoad = 1, hasSideEffects = 1 in {
-    def CJE8rm  : X86Inst<0, Pseudo, NoImm, (outs), (ins GR8:$src0, i8mem:$src1),
-                          "CompareExitJumpb $src0, $src1", NoItinerary>;
-    def CJE16rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR16:$src0, i16mem:$src1),
-                          "CompareExitJumpw $src0, $src1", NoItinerary>;
-    def CJE32rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR32:$src0, i32mem:$src1),
-                          "CompareExitJumpd $src0, $src1", NoItinerary>;
-    def CJE64rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR64:$src0, i64mem:$src1),
-                          "CompareExitJumpq $src0, $src1", NoItinerary>;
-    // The prefix 'FS' stands for "frame setup". These instructions are to be
-    // used for checking duplicates of (i) return address, (ii) frame pointer,
-    // and (iii) callee-saved registers.
-    def FS_CJE8rm  : X86Inst<0, Pseudo, NoImm, (outs), (ins GR8:$src0, i8mem:$src1),
-                             "FS_CompareExitJumpb $src0, $src1", NoItinerary>;
-    def FS_CJE16rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR16:$src0, i16mem:$src1),
-                             "FS_CompareExitJumpw $src0, $src1", NoItinerary>;
-    def FS_CJE32rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR32:$src0, i32mem:$src1),
-                             "FS_CompareExitJumpd $src0, $src1", NoItinerary>;
-    def FS_CJE64rm : X86Inst<0, Pseudo, NoImm, (outs), (ins GR64:$src0, i64mem:$src1),
-                             "FS_CompareExitJumpq $src0, $src1", NoItinerary>;
+  let Constraints = "$src0 = $dst" in {
+    def CJE8rm  : PseudoAsmI<(outs GR8:$dst), (ins GR8:$src0, i8mem:$src1),
+                              "CompareExitJumpb $src0, $src1",
+                              [(set GR8:$dst, (X86cje GR8:$src0, addr:$src1))]>;
+    def CJE16rm : PseudoAsmI<(outs GR16:$dst), (ins GR16:$src0, i16mem:$src1),
+                              "CompareExitJumpw $src0, $src1",
+                              [(set GR16:$dst, (X86cje GR16:$src0, addr:$src1))]>;
+    def CJE32rm : PseudoAsmI<(outs GR32:$dst), (ins GR32:$src0, i32mem:$src1),
+                              "CompareExitJumpd $src0, $src1",
+                              [(set GR32:$dst, (X86cje GR32:$src0, addr:$src1))]>;
+    def CJE64rm : PseudoAsmI<(outs GR64:$dst), (ins GR64:$src0, i64mem:$src1),
+                              "CompareExitJumpq $src0, $src1",
+                              [(set GR64:$dst, (X86cje GR64:$src0, addr:$src1))]>;
+
+    def CJEf32rm : PseudoAsmI<(outs RST:$dst), (ins RST:$src0, i32mem:$src1),
+                               "CompareExitJumpd $src0, $src1",
+                               [(set f32:$dst, (X86cje f32:$src0, addr:$src1))]>;
+    def CJEf64rm : PseudoAsmI<(outs RST:$dst), (ins RST:$src0, i64mem:$src1),
+                               "CompareExitJumpq $src0, $src1",
+                               [(set f64:$dst, (X86cje f64:$src0, addr:$src1))]>;
+  }
+  // The prefix 'FS' stands for "frame setup". These instructions are to be
+  // used for checking duplicates of (i) return address, (ii) frame pointer,
+  // and (iii) callee-saved registers.
+  def FS_CJE8rm  : PseudoAsmI<(outs), (ins GR8:$src0, i8mem:$src1),
+                              "FS_CompareExitJumpb $src0, $src1", []>;
+  def FS_CJE16rm : PseudoAsmI<(outs), (ins GR16:$src0, i16mem:$src1),
+                              "FS_CompareExitJumpw $src0, $src1", []>;
+  def FS_CJE32rm : PseudoAsmI<(outs), (ins GR32:$src0, i32mem:$src1),
+                              "FS_CompareExitJumpd $src0, $src1", []>;
+  def FS_CJE64rm : PseudoAsmI<(outs), (ins GR64:$src0, i64mem:$src1),
+                              "FS_CompareExitJumpq $src0, $src1", []>;
 }
 
 

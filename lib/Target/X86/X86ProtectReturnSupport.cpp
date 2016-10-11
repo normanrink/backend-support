@@ -62,12 +62,12 @@ bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
   bool modified = false;
   
   if (!Func.getName().equals("main")) {
-    // Store the contents of register 'r11' (i.e. the return address) onto
+    // Store the contents of register 'rbx' (i.e. the return address) onto
     // the stack immediately after entering the function 'Func':
     const TargetInstrInfo &TII = *Func.getTarget().getInstrInfo();
     const X86Subtarget &STI = Func.getTarget().getSubtarget<X86Subtarget>();
 
-    unsigned Reg = STI.is64Bit() ? X86::R11 : X86::EDX;
+    unsigned Reg = STI.is64Bit() ? X86::RBX : X86::EBX;
     unsigned PushOpc = STI.is64Bit() ? X86::PUSH64r : X86::PUSH32r;
 
     MachineBasicBlock *MBB = Func.begin();
@@ -77,13 +77,13 @@ bool ProtectReturnSupportPass::runOnMachineFunction(MachineFunction &Func) {
     BuildMI(*MBB, MI, DL, TII.get(PushOpc)).addReg(Reg, RegState::Kill);
  
     modified = true;
- 
+
     // Introduce a check of the return address immediately before return
     // instructions: 
     for (auto MBBI = Func.begin(), MBBE = Func.end(); MBBI != MBBE; MBBI++) {
       if (!isReturnBlock(MBBI))
         continue;
-      
+
       modified |= handleReturnInst(*MBBI, MBBI->getFirstTerminator());
     }
   }
@@ -146,7 +146,7 @@ bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
    * label immediately after the call instruction. The address of the label is
    * then equal to the return address, which is put on the stack by the call
    * instruction. The value of the label, i.e. the return address, is then
-   * placed in the 'r11' register.
+   * placed in the 'rbx' register.
    *
    * Introducing the new label is involved since it requires that a new basic
    * block is introduced. Instructions must then be transferred to the new
@@ -188,9 +188,9 @@ bool ProtectReturnSupportPass::handleCallInst(MachineInstr *MI) {
   // of the new basic block 'NewMBB':
   NewMBB->setIsLandingPad();
   
-  // Move the address of the start of 'NewBB' to register 'r11' immediately
+  // Move the address of the start of 'NewBB' to register 'rbx' immediately
   // before the call instruction 'MI':
-  unsigned Reg = STI.is64Bit() ? X86::R11 : X86::EDX;
+  unsigned Reg = STI.is64Bit() ? X86::RBX : X86::EBX;
   unsigned MovOpc = STI.is64Bit() ? X86::MOV64ri : X86::MOV32ri;
   BuildMI(*MBB, MI, DL, TII.get(MovOpc), Reg).addMBB(NewMBB);
 
@@ -211,16 +211,17 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   const TargetInstrInfo &TII = *MF.getTarget().getInstrInfo();
   const X86Subtarget &STI = MF.getTarget().getSubtarget<X86Subtarget>();
 
-  unsigned Reg = STI.is64Bit() ? X86::R11 : X86::EDX;
+  unsigned Reg = STI.is64Bit() ? X86::RBX : X86::EBX;
   unsigned PopOpc = STI.is64Bit() ? X86::POP64r : X86::POP32r;
-  
+
   if (MI->getOpcode() == X86::TAILJMPd64 || MI->getOpcode() == X86::TAILJMPm64 ||
-      MI->getOpcode() == X86::TAILJMPr64) {
+      MI->getOpcode() == X86::TAILJMPr64 || MI->getOpcode() == X86::TAILJMPd ||
+      MI->getOpcode() == X86::TAILJMPm   || MI->getOpcode() == X86::TAILJMPr) {
     // TODO: Figure out if one can test for tail jumps by "isReturn() && isCall()"
     // of "isReturn() && isBranch()" or similar combination.
 
     // For tail jumps, the duplicated return address from the stack must be put into
-    // the 'r11' register:
+    // the 'rbx' register:
     BuildMI(MBB, MI, DL, TII.get(PopOpc), Reg);
     return true;
   }
@@ -252,9 +253,17 @@ bool ProtectReturnSupportPass::handleReturnInst(MachineBasicBlock &MBB, MachineI
   
   // Replace the return instruction with an increment of the stack pointer, followed by an
   // indirect jump (in order to avoid another implicit stack access by the return instruction): 
+  unsigned StackIncrement = SlotSize;
+  unsigned RetOpc = MI->getOpcode();
+  if (RetOpc == X86::RETIL || RetOpc == X86::RETIQ || RetOpc == X86::RETIW) {
+    // Return instruction has an immediate argument, which specifies
+    // how many bytes are to be popped of the stack upon returning.
+    assert(MI->getNumOperands() == 1 && MI->getOperand(0).isImm());
+    StackIncrement += MI->getOperand(0).getImm();
+  }
   unsigned AddOpc = STI.is64Bit() ? X86::ADD64ri8 : X86::ADD32ri8; 
   MachineInstr *mi = BuildMI(MBB, MI, DL, TII.get(AddOpc), StackPtr)
-                       .addReg(StackPtr).addImm(SlotSize);
+                       .addReg(StackPtr).addImm(StackIncrement);
   mi->getOperand(3).setIsDead(); // The EFLAGS implicit def is dead.
   
   unsigned JmpOpc = STI.is64Bit() ? X86::JMP64r : X86::JMP32r;

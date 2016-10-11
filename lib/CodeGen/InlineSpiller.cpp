@@ -741,16 +741,16 @@ bool InlineSpiller::hoistSpill(LiveInterval &SpillLI, MachineInstr *CopyMI) {
     ++MII;
   }
   // Insert spill without kill flag immediately after def.
-  TII.storeRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot,
-                          MRI.getRegClass(SVI.SpillReg), &TRI);
+  if (TII.protectRegisterSpill(SVI.SpillReg, MBB->getParent())) {
+    TII.spillRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot,
+                            MRI.getRegClass(SVI.SpillReg), &TRI);
+  } else {
+    TII.storeRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot,
+                            MRI.getRegClass(SVI.SpillReg), &TRI);
+  }
   --MII; // Point to store instruction.
   LIS.InsertMachineInstrInMaps(MII);
-  if (TII.protectRegisterSpill(SVI.SpillReg, MBB->getParent())) {
-    TII.storeRegToStackSlot(*MBB, MII, SVI.SpillReg, false, StackSlot+1,
-                            MRI.getRegClass(SVI.SpillReg), &TRI);
-    --MII; // Point to store instruction.
-    LIS.InsertMachineInstrInMaps(MII);
-  }
+
   DEBUG(dbgs() << "\thoisted: " << SVI.SpillVNI->def << '\t' << *MII);
 
   ++NumSpills;
@@ -807,9 +807,7 @@ void InlineSpiller::eliminateRedundantSpills(LiveInterval &SLI, VNInfo *VNI) {
       // Erase spills.
       int FI;
       bool RegMatch = (Reg == TII.isStoreToStackSlot(MI, FI));
-      bool FIMatch = TII.protectRegisterSpill(Reg, &MF)
-                       ? (FI == StackSlot || FI == StackSlot+1)
-                       : (FI == StackSlot);
+      bool FIMatch = (FI == StackSlot);
       if (RegMatch && FIMatch) {
         DEBUG(dbgs() << "Redundant spill " << Idx << '\t' << *MI);
         // eliminateDeadDefs won't normally remove stores, so switch opcode.
@@ -1201,14 +1199,12 @@ void InlineSpiller::insertSpill(unsigned NewVReg, bool isKill,
                                  MachineBasicBlock::iterator MI) {
   MachineBasicBlock &MBB = *MI->getParent();
 
-  bool duplicate = TII.protectRegisterSpill(NewVReg, MBB.getParent());
-  bool earlyKill = isKill && !duplicate;
-
   MachineInstrSpan MIS(MI);
-  TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, earlyKill, StackSlot,
-                          MRI.getRegClass(NewVReg), &TRI);
-  if (duplicate) {
-    TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot+1,
+  if (TII.protectRegisterSpill(NewVReg, MBB.getParent())) {
+    TII.spillRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot,
+                            MRI.getRegClass(NewVReg), &TRI);
+  } else {
+    TII.storeRegToStackSlot(MBB, std::next(MI), NewVReg, isKill, StackSlot,
                             MRI.getRegClass(NewVReg), &TRI);
   }
 
@@ -1304,7 +1300,7 @@ void InlineSpiller::spillAroundUses(unsigned Reg) {
       if (!TII.protectRegisterSpill(NewVReg, MF)) { 
         insertReload(NewVReg, Idx, MI);
       } else {
-        MachineInstr *InsertMI = TII.findReloadPosition(MI);
+        MachineBasicBlock::iterator InsertMI = TII.findReloadPosition(MI);
         insertReload(NewVReg, Idx, InsertMI);
         
         MachineInstrSpan MIS(InsertMI);

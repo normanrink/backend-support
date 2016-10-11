@@ -477,6 +477,12 @@ public:
 
   static unsigned getFSOpcode(unsigned);
   static bool isRegLiveAtMI(unsigned Reg, MachineInstr *MI);
+
+  void spillRegToStackSlot(MachineBasicBlock &MBB,
+                           MachineBasicBlock::iterator MI,
+                           unsigned SrcReg, bool isKill, int FrameIndex,
+                           const TargetRegisterClass *RC,
+                           const TargetRegisterInfo *TRI) const override;
 };
 
 } // End llvm namespace

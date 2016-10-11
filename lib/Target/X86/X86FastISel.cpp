@@ -2554,6 +2554,9 @@ bool X86FastISel::FastLowerArguments() {
 
   if (!Subtarget->is64Bit())
     return false;
+
+  if (MF->protectArgs())
+    return false;
   
   // Only handle simple cases. i.e. Up to 6 i32/i64 scalar arguments.
   unsigned GPRCnt = 0;
@@ -2697,6 +2700,9 @@ bool X86FastISel::FastLowerCall(CallLoweringInfo &CLI) {
   // Fast-isel doesn't know about callee-pop yet.
   if (X86::isCalleePop(CC, Subtarget->is64Bit(), IsVarArg,
                        TM.Options.GuaranteedTailCallOpt))
+    return false;
+
+  if (MF->protectArgs())
     return false;
 
   // If this is a constant i1/i8/i16 argument, promote to i32 to avoid an extra

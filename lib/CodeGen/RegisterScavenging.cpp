@@ -411,6 +411,11 @@ unsigned RegScavenger::scavengeRegister(const TargetRegisterClass *RC,
   // If the target knows how to save/restore the register, let it do so;
   // otherwise, use the emergency stack spill slot.
   if (!TRI->saveScavengerRegister(*MBB, I, UseMI, RC, SReg)) {
+    // For the protection mechanisms we should use the target-specific
+    // method for saving registers:
+    assert(0 && "should use target-specific method for "
+                "saving/restoring register");
+
     // Spill the scavenged register before I.
     assert(Scavenged[SI].FrameIndex >= 0 &&
            "Cannot scavenge register without an emergency spill slot!");

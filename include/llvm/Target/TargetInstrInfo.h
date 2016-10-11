@@ -1052,6 +1052,20 @@ public:
   virtual void populateExitBlock(MachineBasicBlock *exit) const {
     return;
   }
+
+  virtual void spillRegToStackSlot(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI,
+                                   unsigned SrcReg, bool isKill, int FrameIndex,
+                                   const TargetRegisterClass *RC,
+                                   const TargetRegisterInfo *TRI) const {
+    // We really want to use the 'spillRegToStackSlot' method of the
+    // target-specific derived classes. Hence, assert if we get here:
+    assert(0 && "should use target-specific method for register spilling");
+
+    // Generally, we could defer to the 'storeRegToStackSlot' method,
+    // without taking any actions that are specific to register spills:
+    //storeRegToStackSlot(MBB, MI, SrcReg, isKill, FrameIndex, RC, TRI);
+  }
 };
 
 } // End llvm namespace

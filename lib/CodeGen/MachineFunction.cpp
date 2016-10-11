@@ -60,6 +60,9 @@ ProtectReturnPtr("protect-return-ptr",
 static cl::opt<bool>
 ProtectJT("protect-jt",
           cl::desc("Protect jump tables"));
+static cl::opt<bool>
+ProtectArg("protect-arg",
+           cl::desc("Protect function arguments on the stack by duplicating"));
 
 //===----------------------------------------------------------------------===//
 // MachineFunction implementation
@@ -107,7 +110,7 @@ MachineFunction::MachineFunction(const Function *F, const TargetMachine &TM,
 
 void MachineFunction::populateExitBlock() {
   if (!protectSpills() && !protectCSRs() && !protectFramePtr()
-      && !protectReturnPtr() && !protectJT())
+      && !protectReturnPtr() && !protectJT() && !protectArgs())
     return;
 
   ExitBlock = CreateMachineBasicBlock();
@@ -115,7 +118,7 @@ void MachineFunction::populateExitBlock() {
 
 void MachineFunction::enqueueExitBlock() {
   if (!protectSpills() && !protectCSRs() && !protectFramePtr()
-      && ! protectReturnPtr() && !protectJT())
+      && ! protectReturnPtr() && !protectJT() && !protectArgs())
     return;
 
   BasicBlocks.push_back(ExitBlock);
@@ -160,6 +163,10 @@ bool MachineFunction::protectReturnPtr() const {
   // caller and callee. Hence, return pointer protection cannot be
   // predicated on whether the MachineFunction is to be encoded.
   return ProtectReturnPtr;
+}
+
+bool MachineFunction::protectArgs() const {
+  return ProtectArg;
 }
 
 MachineFunction::~MachineFunction() {

@@ -2276,6 +2276,24 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
 
   CCInfo.AnalyzeFormalArguments(Ins, CC_X86);
 
+  int32_t SizeOnStack = 0;
+  if (MF.protectArgs() && !MF.getName().equals("main") && !isVarArg) {
+    for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+      CCValAssign &VA = ArgLocs[i];
+      if (!VA.isMemLoc())
+        continue;
+
+      ISD::ArgFlagsTy Flags = Ins[i].Flags;
+
+      int32_t ArgOffset = VA.getLocMemOffset();
+      int32_t ArgSize = Flags.isByVal()
+                          ? Flags.getByValSize()
+                          : (VA.getLocVT().getSizeInBits()+7)/8;
+      SizeOnStack = (ArgOffset + ArgSize) > SizeOnStack ? (ArgOffset + ArgSize)
+                                                        : SizeOnStack;
+    }
+  }
+
   unsigned LastVal = ~0U;
   SDValue ArgValue;
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
@@ -2340,6 +2358,30 @@ X86TargetLowering::LowerFormalArguments(SDValue Chain,
     } else {
       assert(VA.isMemLoc());
       ArgValue = LowerMemArgument(Chain, CallConv, Ins, dl, DAG, VA, MFI, i);
+
+      if (MF.protectArgs() && !MF.getName().equals("main") && !isVarArg) {
+        // NOTE: The body of this if-statement was largely copied
+        // from the method 'LowerMemArgument'.
+        ISD::ArgFlagsTy Flags = Ins[i].Flags;
+        bool AlwaysUseMutable = FuncIsMadeTailCallSafe(
+          CallConv, DAG.getTarget().Options.GuaranteedTailCallOpt);
+        bool isImmutable = !AlwaysUseMutable && !Flags.isByVal();
+
+        if (!Flags.isByVal() && !VA.getValVT().isFloatingPoint()) {
+          int32_t Offset = SizeOnStack + VA.getLocMemOffset();
+          int FI = MFI->CreateFixedObject(VA.getLocVT().getSizeInBits()/8,
+                                          Offset, isImmutable);
+          SDValue FIN = DAG.getFrameIndex(FI, getPointerTy());
+
+          SmallVector<SDValue, 2> Ops;
+          Ops.push_back(ArgValue);
+          Ops.push_back(FIN);
+          SDVTList VTs = DAG.getVTList(ArgValue.getValueType());
+          ArgValue = DAG.getMemIntrinsicNode(X86ISD::CJE, dl, VTs, Ops, VA.getValVT(),
+                                     MachinePointerInfo::getFixedStack(FI),
+                                     0, false, true, false);
+        }
+      }
     }
 
     // If value is passed via pointer - do a load.
@@ -2663,8 +2705,8 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       X86Info->setTCReturnAddrDelta(FPDiff);
   }
 
-  unsigned NumBytesToPush = NumBytes;
-  unsigned NumBytesToPop = NumBytes;
+  unsigned NumBytesToPush = (MF.protectArgs() && !isVarArg) ? 2*NumBytes : NumBytes;
+  unsigned NumBytesToPop =  (MF.protectArgs() && !isVarArg) ? 2*NumBytes : NumBytes;
 
   // If we have an inalloca argument, all stack space has already been allocated
   // for us and be right at the top of the stack.  We don't support multiple
@@ -2693,6 +2735,8 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // of tail call optimization arguments are handle later.
   const X86RegisterInfo *RegInfo =
     static_cast<const X86RegisterInfo*>(DAG.getTarget().getRegisterInfo());
+  int32_t SizeOnStack = 0;
+  SmallVector<SDValue, 4> ArgsOnStack;
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     // Skip inalloca arguments, they have already been written.
     ISD::ArgFlagsTy Flags = Outs[i].Flags;
@@ -2760,6 +2804,41 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                                       getPointerTy());
       MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
                                              dl, DAG, VA, Flags));
+
+      int32_t ArgOffset = VA.getLocMemOffset();
+      int32_t ArgSize = Flags.isByVal()
+                          ? Flags.getByValSize()
+                          : (VA.getLocVT().getSizeInBits()+7)/8;
+      SizeOnStack = (ArgOffset + ArgSize) > SizeOnStack ? (ArgOffset + ArgSize)
+                                                        : SizeOnStack;
+      ArgsOnStack.push_back(Arg);
+    }
+  }
+  if (MF.protectArgs() && !isVarArg) {
+    unsigned index = 0;
+    for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+      // Skip inalloca arguments, they have already been written.
+      ISD::ArgFlagsTy Flags = Outs[i].Flags;
+      if (Flags.isInAlloca())
+        continue;
+
+      CCValAssign &VA = ArgLocs[i];
+      bool isByVal = Flags.isByVal();
+
+      if (!VA.isMemLoc())
+        continue;
+
+      SDValue Arg = ArgsOnStack[index++];
+      if (!StackPtr.getNode())
+        StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
+                                      getPointerTy());
+      unsigned LocMemOffset = VA.getLocMemOffset() + SizeOnStack;
+      SDValue PtrOff = DAG.getIntPtrConstant(LocMemOffset);
+      PtrOff = DAG.getNode(ISD::ADD, dl, getPointerTy(), StackPtr, PtrOff);
+      if (!isByVal)
+        MemOpChains.push_back(DAG.getStore(Chain, dl, Arg, PtrOff,
+                                           MachinePointerInfo::getStack(LocMemOffset),
+                                           false, false, 0));
     }
   }
 
