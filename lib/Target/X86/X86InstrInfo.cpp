@@ -3358,37 +3358,39 @@ bool X86InstrInfo::protectRegisterSpill(unsigned Reg,
     return false;
 }
 
-bool X86InstrInfo::isRegLiveAtMI(unsigned Reg, MachineInstr *MI) {
+bool X86InstrInfo::isRegLiveAtMI(unsigned Reg, MachineBasicBlock::iterator MI,
+                                 bool unreliableLiveInInfo) const {
   MachineBasicBlock *MBB = MI->getParent();
   MachineBasicBlock::iterator MBBI = MI, OrigMBBI = MI;
   
   // Search back to the latest definition of 'Reg' that precedes 'MI':
   MachineInstr *PrevDef = nullptr;
-  if (MBBI != MBB->begin()) {
-    do {
-      --MBBI;
-      if (MBBI->definesRegister(Reg) &&
-          !MBBI->registerDefIsDead(Reg)) {
-        PrevDef = MBBI;
-        break;
-      }
-    } while (MBBI != MBB->begin());
+  while (MBBI != MBB->begin()) {
+    --MBBI;
+    if (MBBI->definesRegister(Reg) &&
+        !MBBI->registerDefIsDead(Reg)) {
+      PrevDef = MBBI;
+      break;
+    }
   }
-  //if (!PrevDef) // convervatively assume live-in:
-  //  return true;
-  if (!PrevDef && !MBB->isLiveIn(Reg)) {
-    // There is no definition of 'Reg' in this basic block
-    // and 'Reg' is not "live in". 
-    return false;
+  if (!PrevDef) {
+    // If there is no definition of 'Reg' in this basic block
+    // and 'Reg' is not "live in", then 'Reg' is deat at 'MI': 
+    if (!unreliableLiveInInfo && !MBB->isLiveIn(Reg))
+      return false;
   }
 
   // Now search forward to the last use of 'PrevDef':
   bool isLiveAtMI = false;
-  // TODO: The following increment should be taken out!!
-  //++MBBI;
+  if (MBBI != MBB->begin()) {
+    // Point the iterator past the instruction
+    // that defines 'Reg':
+    ++MBBI;
+  }
   while (MBBI != MBB->end()) {
     if (MBBI == OrigMBBI) {
       isLiveAtMI = true;
+      break;
     }
     if (MBBI->killsRegister(Reg) ||
         MBBI->registerDefIsDead(Reg)) {

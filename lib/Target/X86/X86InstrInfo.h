@@ -476,7 +476,9 @@ public:
   void populateExitBlock(MachineBasicBlock *exit) const override;
 
   static unsigned getFSOpcode(unsigned);
-  static bool isRegLiveAtMI(unsigned Reg, MachineInstr *MI);
+
+  bool isRegLiveAtMI(unsigned Reg, MachineBasicBlock::iterator MI,
+                     bool unreliableLiveInInfo = false) const;
 
   void spillRegToStackSlot(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MI,
