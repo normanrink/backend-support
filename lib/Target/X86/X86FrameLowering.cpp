@@ -496,7 +496,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF) const {
       !usesTheStack(MF) &&                              // Don't push and pop.
       !MF.shouldSplitStack()) {                         // Regular stack
     uint64_t MinSize = X86FI->getCalleeSavedFrameSize();
-    if (HasFP) MinSize = SlotSize;
+    if (HasFP) MinSize += SlotSize;
     MinSize += getExtraSlotsForProtection(MF);
     StackSize = std::max(MinSize, StackSize > 128 ? StackSize - 128 : 0);
     MFI->setStackSize(StackSize);
