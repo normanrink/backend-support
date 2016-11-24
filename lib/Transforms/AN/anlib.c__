@@ -1,0 +1,74 @@
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+
+typedef uint64_t ptr_enc_t;
+
+static const uint64_t A_64 = CODE_VALUE_A;
+static const uint32_t A_32 = CODE_VALUE_A;
+
+static int64_t accu_enc = 0;
+
+static uint64_t cntLoads = 0;
+
+void incLoads(int64_t p) {
+  ++cntLoads;
+  //printf("loads: %lu -- 0x%llX\n", cntLoads, p);
+  printf("loads: %lu\n", cntLoads);
+}
+
+void ___accumulate_enc(int64_t x_enc, int64_t *accu)
+{
+  int64_t old_accu = *accu;
+  LOG_ACCU_PRINTF("x_enc=0x%016lx, old_accu=0x%016lx, ", x_enc, old_accu);
+
+  if(__builtin_saddl_overflow(old_accu, x_enc, accu)) {
+    LOG_ACCU_PRINTF("OF, new_accu=0x%016lx", *accu);
+    an_assert(old_accu);
+    *accu = x_enc;
+  }
+  LOG_ACCU_PRINTF("\n");
+}
+
+void accumulate_enc(int64_t x_enc)
+{
+  ___accumulate_enc(x_enc, &accu_enc);
+}
+
+int64_t an_encode_64(int64_t x) {
+  return x*A_64;
+}
+
+int64_t an_decode_64(int64_t x) {
+  int64_t dec = x/A_64;
+  if (x - dec*A_64)
+    exit(2);
+  
+  return dec;
+}
+
+int64_t an_check_64(int64_t x) {
+  return (x % A_64);
+}
+
+void an_assert_64(int64_t x) {
+  if (an_check_64(x))
+    exit(2);
+}
+
+int32_t an_encode_32(int32_t x) {
+  return x*A_32;
+}
+
+int32_t an_decode_32(int32_t x) {
+  int32_t dec = x/A_32;
+  if (x - dec*A_32)
+    exit(2);
+  
+  return dec;
+}
+
+
