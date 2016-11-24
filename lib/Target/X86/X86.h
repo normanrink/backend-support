@@ -15,6 +15,7 @@
 #ifndef TARGET_X86_H
 #define TARGET_X86_H
 
+#include "llvm/Pass.h"
 #include "llvm/Support/CodeGen.h"
 
 namespace llvm {
@@ -84,6 +85,8 @@ FunctionPass *createX86ProtectReturnSupport();
 FunctionPass *createX86ProtectSpillSupport();
 
 FunctionPass *createX86EnqueueExits();
+
+Pass *createANEncoder();
 
 } // End llvm namespace
 
